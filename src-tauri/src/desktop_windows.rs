@@ -1,19 +1,16 @@
+use serde::Serialize;
+use std::sync::Arc;
 use tauri::Emitter;
 use tauri::EventTarget;
 use tauri::Manager;
 use tauri::{LogicalPosition, LogicalRect, LogicalSize};
-use tokio::sync::broadcast;
 
-use crate::config;
-use crate::window_info::{WindowInfo, filter_windows, coverage};
-
-
-#[derive(Clone, Debug)]
-pub enum AppEvent {
-    Config(config::Config),
-    Monitors(Vec<tauri::Monitor>),
-    Windows(Vec<WindowInfo>),
-}
+use crate::config::MonitorConfig;
+use crate::config::CONFIG;
+use crate::monitor_info::MONITORS;
+use crate::utils::Tracker;
+use crate::window_info::WINDOWS;
+use crate::window_info::{coverage, filter_windows};
 
 const RUNTIME_JS: &str = include_str!("runtime.js");
 
@@ -116,186 +113,213 @@ fn wallpaper_url(wallpaper: &str) -> url::Url {
 ///
 /// Holds a broadcast receiver for [`AppEvent`] so it can react to config and
 /// monitor changes independently without a global scan.
+#[derive(Clone)]
 pub struct DesktopWindow {
     /// 0-based monitor index.
     index: usize,
-    window: tauri::WebviewWindow,
-    event_rx: broadcast::Receiver<AppEvent>,
-    monitor: tauri::Monitor,
-    /// Whether the desktop is currently considered focused (no regular app window has focus).
-    focused: bool,
+    window: Arc<tauri::WebviewWindow>,
+    handle: Option<Arc<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl DesktopWindow {
-    /// Drive this window until its monitor or config entry disappears,
-    /// or until the event sender is dropped.
-    pub async fn run(mut self) {
-        let mut prev_wallpaper_config = toml::Table::new();
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / 30.0));
-        ticker.tick().await; // consume the instant-fire first tick
+    pub fn new(app: &tauri::AppHandle, index: usize) -> Result<Self, tauri::Error> {
+        let monitor = MONITORS
+            .borrow()
+            .get(index)
+            .ok_or(anyhow::anyhow!("Invalid monitor index"))?
+            .clone();
+
+        let i1 = index + 1;
+        let label = format!("monitor-{i1}");
+        let monitor_config = CONFIG
+            .borrow()
+            .get_monitor(index)
+            .ok_or(anyhow::anyhow!("Invalid config index"))?
+            .clone();
+        let serialized_wallpaper_config = serde_json::to_string(&monitor_config.config)?;
+        let monitor_clone = monitor.clone();
+
+        let window = Arc::new(
+            tauri::WebviewWindowBuilder::new(
+                app,
+                &label,
+                tauri::WebviewUrl::CustomProtocol(wallpaper_url(&monitor_config.wallpaper)),
+            )
+            .title("activedesk")
+            .transparent(true)
+            .decorations(false)
+            .focused(false)
+            .skip_taskbar(true)
+            .resizable(false)
+            .hidden_title(true)
+            .shadow(false)
+            .initialization_script(&format!("(function () {{
+                {RUNTIME_JS};
+                config = {serialized_wallpaper_config};
+            }})();"))
+            .build()?,
+        );
+        let window_clone = window.clone();
+
+        app.run_on_main_thread(move || {
+            set_window_as_background(window_clone.as_ref(), &monitor_clone).ok();
+        })?;
+
+        let mut desktop_window = DesktopWindow {
+            index,
+            window,
+            handle: None,
+        };
+        let desktop_window_clone = desktop_window.clone();
+
+        let handle = tauri::async_runtime::spawn(async move {
+            let _ = desktop_window_clone.run_window_async().await;
+        });
+        desktop_window.handle = Some(Arc::new(handle));
+
+        Ok(desktop_window)
+    }
+
+    pub fn monitor(&self) -> Option<tauri::Monitor> {
+        MONITORS.borrow().get(self.index).cloned()
+    }
+
+    pub fn logical_monitor_rect(&self) -> Option<LogicalRect<f64, f64>> {
+        let Some(monitor) = self.monitor() else {
+            return None;
+        };
+        let work_area_physical = monitor.work_area();
+        let scale_factor = monitor.scale_factor();
+        Some(LogicalRect {
+            position: LogicalPosition {
+                x: work_area_physical.position.x as f64 / scale_factor,
+                y: work_area_physical.position.y as f64 / scale_factor,
+            },
+            size: LogicalSize {
+                width: work_area_physical.size.width as f64 / scale_factor,
+                height: work_area_physical.size.height as f64 / scale_factor,
+            },
+        })
+    }
+
+    pub fn config(&self) -> Option<MonitorConfig> {
+        CONFIG.borrow().get_monitor(self.index).cloned()
+    }
+
+    pub fn emit<S>(&self, event: &str, payload: S) -> Result<(), tauri::Error> where S: Serialize + Clone {
+        let label = self.window.label().to_string();
+        self.window
+            .app_handle()
+            .emit_to(
+                EventTarget::WebviewWindow { label },
+                event,
+                payload,
+            )
+    }
+
+
+    async fn run_window_async(&self) -> Result<(), tauri::Error> {
+        let mut config_rx = CONFIG.clone();
+        let mut monitors_rx = MONITORS.clone();
+        let mut windows_rx = WINDOWS.clone();
+
+        let mut sync_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut cursor_tick = tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / 30.0));
+
+        let mut tracked_coverage = Tracker::new(0.0);
+        let mut tracked_focused = Tracker::new(false);
+        let mut tracked_cursor_position = Tracker::new((0.0, 0.0));
+
+        macro_rules! sync_visibility {
+            ($force: expr) => {
+                let Some(rect) = self.logical_monitor_rect() else {
+                    continue
+                };
+                let windows = windows_rx.borrow();
+                let visible_windows = filter_windows(&windows, &rect);
+                if tracked_coverage.update(coverage(&visible_windows, &rect)) || $force {
+                    let _ = self.emit(
+                        "desktop-coverage",
+                        serde_json::json!({ "coverage": tracked_coverage.get() }),
+                    );
+                }
+                let focused = visible_windows.into_iter().filter(|w| w.focused).count() == 0;
+                if tracked_focused.update(focused) || $force {
+                    let _ = self.emit(
+                        "desktop-focus",
+                        serde_json::json!({ "focused": tracked_focused.get() }),
+                    );
+                }
+            };
+        }
 
         loop {
             tokio::select! {
-                res = self.event_rx.recv() => {
-                    match res {
-                        Ok(AppEvent::Config(cfg)) => {
-                            let i1 = self.index + 1;
-                            let Some(wp) = cfg.monitors.get(&i1.to_string()) else {
-                                // Config entry removed — close and exit.
-                                let win = self.window.clone();
-                                win.clone().run_on_main_thread(move || { win.close().ok(); }).ok();
-                                return;
-                            };
-                            let url = wallpaper_url(&wp.wallpaper);
-                            if self.window.url().map(|u| u != url).unwrap_or(false) {
-                                self.window.navigate(url).ok();
-                            }
-                            let wallpaper_config = wp.config.clone();
-                            if wallpaper_config != prev_wallpaper_config {
-                                println!("config change");
-                                prev_wallpaper_config = wallpaper_config.clone();
-                                self.window.app_handle().emit_to(
-                                    EventTarget::WebviewWindow { label: self.window.label().to_string() },
-                                    "wallpaper-config",
-                                    wallpaper_config,
-                                ).ok();
-                            }
-                        }
-                        Ok(AppEvent::Monitors(monitors)) => {
-                            let Some(m) = monitors.get(self.index) else {
-                                // Monitor removed — close and exit.
-                                let win = self.window.clone();
-                                win.clone().run_on_main_thread(move || { win.close().ok(); }).ok();
-                                return;
-                            };
-                            let (size, pos) = (*m.size(), *m.position());
-                            self.monitor = m.clone();
-                            let win = self.window.clone();
-                            win.clone().run_on_main_thread(move || {
-                                win.set_size(size).ok();
-                                win.set_position(pos).ok();
-                            }).ok();
-                        }
-                        Ok(AppEvent::Windows(windows)) => {
-                            // Filter windows to this monitor's bounds and calculate coverage
-                            let work_area_physical = self.monitor.work_area();
-                            let scale_factor = self.monitor.scale_factor();
-                            let work_area = LogicalRect {
-                                position: LogicalPosition {
-                                    x: work_area_physical.position.x as f64 / scale_factor,
-                                    y: work_area_physical.position.y as f64 / scale_factor,
-                                },
-                                size: LogicalSize {
-                                    width: work_area_physical.size.width as f64 / scale_factor,
-                                    height: work_area_physical.size.height as f64 / scale_factor,
-                                }
-                            };
-                            let visible_windows = filter_windows(&windows, &work_area);
-
-                            let cov = coverage(&windows, &work_area);
-
-                            let focused = visible_windows.into_iter()
-                                .filter(|w| w.focused)
-                                .count() == 0;
-
-                            let label = self.window.label().to_string();
-
-                            // Emit coverage event to JS
-                            self.window
-                                .app_handle()
-                                .emit_to(
-                                    EventTarget::WebviewWindow { label: label.clone() },
-                                    "desktop-coverage",
-                                    serde_json::json!({ "coverage": cov }),
-                                )
-                                .ok();
-
-                            // Check focus state and emit events only when changed
-                            if focused != self.focused {
-                                self.focused = focused;
-                                self.window.app_handle().emit_to(
-                                    EventTarget::WebviewWindow { label: label.clone() },
-                                    "desktop-focus",
-                                    serde_json::json!({ "focused": focused }),
-                                ).ok();
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
+                Ok(_) = config_rx.changed() => {
+                    let Some(config) = self.config() else {
+                        continue
+                    };
+                    let _ = self.emit(
+                        "config-change",
+                        serde_json::json!({ "config": config }),
+                    );
                 }
-                _ = ticker.tick() => {
+                Ok(_) = monitors_rx.changed() => {
+                    let Some(monitor) = self.monitor() else {
+                        continue
+                    };
+                    let _ = self.resize_window(&monitor);
+                }
+                Ok(_) = windows_rx.changed() => {
+                    sync_visibility!(false);
+                }
+                _ = sync_tick.tick() => {
+                    sync_visibility!(true);
+                }
+                _ = cursor_tick.tick() => {
                     let Ok(cursor) = self.window.app_handle().cursor_position() else {
                         continue;
                     };
-                    let pos = self.monitor.position();
-                    let sf = self.monitor.scale_factor();
+
+                    let monitor = MONITORS
+                        .borrow()
+                        .get(self.index)
+                        .ok_or(anyhow::anyhow!("Invalid monitor index"))?
+                        .clone();
+
+                    let pos = monitor.position();
+                    let sf = monitor.scale_factor();
                     let x = (cursor.x - pos.x as f64) / sf;
                     let y = (cursor.y - pos.y as f64) / sf;
-                    let label = self.window.label().to_string();
 
-                    self.window
-                        .app_handle()
-                        .emit_to(
-                            EventTarget::WebviewWindow { label },
+                    let cursor_position = (x, y);
+                    if tracked_cursor_position.update(cursor_position) {
+                        let _ = self.emit(
                             "cursor-position",
                             serde_json::json!({ "x": x, "y": y }),
-                        )
-                        .ok();
+                        );
+                    }
                 }
             }
         }
     }
+
+    fn resize_window(&self, monitor: &tauri::Monitor) -> Result<(), tauri::Error> {
+        let window = self.window.clone();
+        let size = monitor.size().clone();
+        let position = monitor.position().clone();
+        window.clone().run_on_main_thread(move || {
+            window.set_size(size).ok();
+            window.set_position(position).ok();
+        })?;
+        Ok(())
+    }
 }
 
-/// Create a desktop window for the given monitor index and spawn its [`DesktopWindow::run`] task.
-///
-/// Window construction and [`set_window_as_background`] must run on the main thread, so this
-/// function dispatches there internally. It is a no-op if a window with the same label already
-/// exists.
-pub fn spawn_window(
-    app: &tauri::AppHandle,
-    index: usize,
-    monitor: tauri::Monitor,
-    wallpaper: config::WallpaperConfig,
-    event_tx: broadcast::Sender<AppEvent>,
-) {
-    let app = app.clone();
-    app.clone().run_on_main_thread(move || {
-        let i1 = index + 1;
-        let label = format!("monitor-{i1}");
-
-        if app.webview_windows().contains_key(&label) {
-            return;
+impl Drop for DesktopWindow {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.handle {
+            handle.abort();
         }
-
-        let _json = serde_json::to_string(&wallpaper.config).unwrap_or_default();
-        let builder = tauri::WebviewWindowBuilder::new(
-            &app,
-            &label,
-            tauri::WebviewUrl::CustomProtocol(wallpaper_url(&wallpaper.wallpaper)),
-        )
-        .title("activedesk")
-        .transparent(true)
-        .decorations(false)
-        .focused(false)
-        .skip_taskbar(true)
-        .resizable(false)
-        .hidden_title(true)
-        .shadow(false)
-        .initialization_script(&format!("(function () {{ {RUNTIME_JS} }})();"));
-
-        match builder.build() {
-            Ok(win) => {
-                if let Err(e) = set_window_as_background(&win, &monitor) {
-                    eprintln!("activedesk: set_window_as_background failed for {label}: {e}");
-                }
-                let event_rx = event_tx.subscribe();
-                tauri::async_runtime::spawn(
-                    DesktopWindow { index, window: win, event_rx, monitor, focused: false }.run(),
-                );
-            }
-            Err(e) => eprintln!("activedesk: failed to create window {label}: {e}"),
-        }
-    }).ok();
+    }
 }

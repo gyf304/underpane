@@ -86,7 +86,7 @@ webviewWindow.listen("cursor-position", function (event) {
 let focused = false;
 let coverage = 0.0;
 let coverageThreshold = 0.8;
-let wallpaperConfig = {};
+let config = {};
 
 function covered(coverage) {
 	return coverage >= coverageThreshold;
@@ -110,32 +110,34 @@ class ActiveDesk extends EventTarget {
 	}
 
 	get config() {
-		return wallpaperConfig;
+		return config;
 	}
 }
 
 const activeDesk = new ActiveDesk();
 window.activeDesk = activeDesk;
 
+webviewWindow.listen("desktop-focus", (event) => {
+	focused = event.payload.focused;
+	activeDesk.dispatchEvent(new FocusEvent(focused ? "focus" : "blur"));
+});
+
 webviewWindow.listen("desktop-coverage", (event) => {
 	const prevCoverage = coverage;
 	coverage = event.payload.coverage;
 	activeDesk.dispatchEvent(
-		new CustomEvent("coveragechange", { detail: { coverage: event.payload.coverage } })
+		new CustomEvent("coveragechange", { detail: { coverage } })
 	);
 	if (covered(prevCoverage) !== covered(coverage)) {
 		activeDesk.dispatchEvent(new Event("visibilitychange", {}))
 	}
 });
 
-webviewWindow.listen("desktop-focus", function (event) {
-	focused = event.payload.focused;
-	activeDesk.dispatchEvent(new FocusEvent(focused ? "focus" : "blur"));
-});
-
-webviewWindow.listen("wallpaper-config", function (event) {
-	wallpaperConfig = event.payload;
-	activeDesk.dispatchEvent(new CustomEvent("configchange", { detail: { config: wallpaperConfig } }));
+webviewWindow.listen("config-change", (event) => {
+	config = event.payload.config;
+	activeDesk.dispatchEvent(
+		new CustomEvent("configchange", { detail: { config } })
+	);
 });
 
 const windowAddEventListener = window.addEventListener.bind(window);

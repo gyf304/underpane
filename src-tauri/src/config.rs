@@ -71,11 +71,11 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wallpapers_directory: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub monitors: BTreeMap<String, WallpaperConfig>,
+    pub monitors: BTreeMap<String, MonitorConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WallpaperConfig {
+pub struct MonitorConfig {
     pub wallpaper: String,
     #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
     pub config: toml::Table,
@@ -141,6 +141,11 @@ impl Config {
 
         fs::create_dir_all(&path)?;
         Ok(path)
+    }
+
+    pub fn get_monitor(&self, index: usize) -> Option<&MonitorConfig> {
+        let i1 = index + 1;
+        self.monitors.get(&format!("{i1}"))
     }
 
     /// Persist config to disk, creating parent directories as needed.

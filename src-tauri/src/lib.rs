@@ -2,41 +2,59 @@ mod config;
 mod desktop_windows;
 mod protocol;
 mod window_info;
+mod monitor_info;
+mod utils;
+
+use std::sync::{LazyLock, Mutex};
+
 use config::CONFIG;
 pub use config::ConfigError;
-use desktop_windows::spawn_window;
 
 use tauri::Manager;
-use tauri::{LogicalPosition, LogicalRect, LogicalSize};
-use tokio::sync::broadcast;
 
-use desktop_windows::AppEvent;
-use window_info::get_all_windows;
+use crate::desktop_windows::DesktopWindow;
+use crate::monitor_info::MONITORS;
+
+static DESKTOP_WINDOWS: LazyLock<Mutex<Vec<Option<DesktopWindow>>>> = LazyLock::new(|| Mutex::new(vec![]));
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-// #[tauri::command]
-// fn get_config(window: tauri::Window) -> toml::Table {
-//     let label = window.label();
-// }
-
-/// Create desktop windows for every (config entry, monitor) pair that doesn't
-/// already have a window. Destruction is self-managed by each [`DesktopWindow::run`] task.
-fn create_missing_windows(
-    app: &tauri::AppHandle,
-    config: &config::Config,
-    monitors: &[tauri::Monitor],
-    event_tx: broadcast::Sender<AppEvent>,
-) {
-    for (i, monitor) in monitors.iter().enumerate() {
-        let i1 = i + 1;
-        if app.webview_windows().contains_key(&format!("monitor-{i1}")) {
-            continue;
-        }
-        let Some(wp) = config.monitors.get(&i1.to_string()) else {
-            continue;
-        };
-        spawn_window(app, i, monitor.clone(), wp.clone(), event_tx.clone());
+#[tauri::command]
+fn get_config(window: tauri::Window) -> Result<toml::Table, serde_json::Value> {
+    println!("config");
+    let label = window.label();
+    let err = serde_json::json!(["Not a monitor window"]);
+    let idstr = label.strip_prefix("monitor-").ok_or(err.clone())?;
+    let index = idstr.parse::<usize>().map_err(|_| err.clone())?;
+    if index < 1 {
+        return Err(serde_json::json!(["Not a monitor window"]));
     }
+    let index = index - 1;
+    let config = CONFIG.borrow();
+    let monitor_config = config.get_monitor(index).ok_or(err.clone())?;
+    println!("config {0:?}", monitor_config.config);
+
+    Ok(monitor_config.config.clone())
+}
+
+pub fn sync_desktop_windows(app: &tauri::AppHandle) -> Result<(), tauri::Error> {
+    let mut windows = DESKTOP_WINDOWS.lock().unwrap();
+    let monitor_count = MONITORS.borrow().len();
+    let config = CONFIG.borrow();
+
+    windows.resize(monitor_count, None);
+
+    for i in 0..monitor_count {
+        let monitor_config = config.get_monitor(i);
+        if monitor_config.is_some() {
+            if windows[i].is_none() {
+                windows[i] = Some(DesktopWindow::new(app, i)?);
+            }
+        } else {
+            windows[i] = None;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -46,7 +64,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        // .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![get_config])
         .register_asynchronous_uri_scheme_protocol(
             "activedesk-wallpaper",
             |_ctx, request, responder| {
@@ -92,123 +110,22 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Snapshot the initial monitor list.
-            let initial_monitors = app.available_monitors().unwrap_or_default();
+            let handle = app.handle().clone();
+            monitor_info::init(&handle);
 
-            // Unified event channel shared by all window tasks and the orchestrator.
-            let (event_tx, _) = broadcast::channel::<AppEvent>(16);
+            sync_desktop_windows(&handle)?;
 
-            // Initial window creation.
-            create_missing_windows(
-                app.handle(),
-                &CONFIG.borrow().clone(),
-                &initial_monitors,
-                event_tx.clone(),
-            );
-
-            // Bridge: forward config watch changes into the event channel.
-            let mut cfg_watch = CONFIG.clone();
-            let tx_cfg = event_tx.clone();
             tauri::async_runtime::spawn(async move {
+                let mut monitors_rx = MONITORS.clone();
+                let mut config_rx = CONFIG.clone();
                 loop {
-                    if cfg_watch.changed().await.is_err() {
-                        break;
-                    }
-                    let cfg = cfg_watch.borrow_and_update().clone();
-                    tx_cfg.send(AppEvent::Config(cfg)).ok();
-                }
-            });
-
-            // Producer: poll available_monitors() every second; send when layout changes.
-            let app_poll = app.handle().clone();
-            let tx_mon = event_tx.clone();
-            let initial_monitors_poll = initial_monitors.clone();
-            tauri::async_runtime::spawn(async move {
-                let monitor_key = |mons: &[tauri::Monitor]| -> Vec<((i32, i32), (u32, u32))> {
-                    mons.iter()
-                        .map(|m| {
-                            let p = m.position();
-                            let s = m.size();
-                            ((p.x, p.y), (s.width, s.height))
-                        })
-                        .collect()
-                };
-                let mut last_key = monitor_key(&initial_monitors_poll);
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    let monitors = match app_poll.available_monitors() {
-                        Ok(m) if !m.is_empty() => m,
-                        Ok(_) => app_poll
-                            .primary_monitor()
-                            .ok()
-                            .flatten()
-                            .into_iter()
-                            .collect(),
-                        Err(_) => continue,
-                    };
-                    let key = monitor_key(&monitors);
-                    if key != last_key {
-                        last_key = key;
-                        tx_mon.send(AppEvent::Monitors(monitors)).ok();
-                    }
-                }
-            });
-
-            // Producer: poll windows every second; send when list changes.
-            let tx_win = event_tx.clone();
-            tauri::async_runtime::spawn(async move {
-                let mut prev_windows: Vec<window_info::WindowInfo> =
-                    vec![window_info::WindowInfo {
-                        focused: false,
-                        id: 0,
-                        rect: LogicalRect {
-                            position: LogicalPosition { x: 0.0, y: 0.0 },
-                            size: LogicalSize {
-                                width: -1.0,
-                                height: -1.0,
-                            },
-                        },
-                    }];
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    let windows = get_all_windows();
-                    if windows != prev_windows {
-                        prev_windows = windows.clone();
-                        tx_win.send(AppEvent::Windows(windows)).ok();
-                    }
-                }
-            });
-
-            // Orchestrator: react to config or monitor changes by creating any missing windows.
-            // Existing windows manage their own updates and destruction via DesktopWindow::run().
-            let app_orch = app.handle().clone();
-            let mut event_rx = event_tx.subscribe();
-            let mut last_config = CONFIG.borrow().clone();
-            let mut last_monitors = initial_monitors.clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    match event_rx.recv().await {
-                        Ok(AppEvent::Config(cfg)) => {
-                            last_config = cfg;
-                            create_missing_windows(
-                                &app_orch,
-                                &last_config,
-                                &last_monitors,
-                                event_tx.clone(),
-                            );
+                    tokio::select! {
+                        Ok(_) = monitors_rx.changed() => {
+                            let _ = sync_desktop_windows(&handle);
                         }
-                        Ok(AppEvent::Monitors(mons)) => {
-                            last_monitors = mons;
-                            create_missing_windows(
-                                &app_orch,
-                                &last_config,
-                                &last_monitors,
-                                event_tx.clone(),
-                            );
+                        Ok(_) = config_rx.changed() => {
+                            let _ = sync_desktop_windows(&handle);
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(broadcast::error::RecvError::Closed) => break,
-                        _ => {}
                     }
                 }
             });

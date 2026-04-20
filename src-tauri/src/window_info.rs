@@ -1,5 +1,7 @@
 use serde::Serialize;
 use tauri::{LogicalPosition, LogicalRect, LogicalSize};
+use std::sync::{LazyLock, OnceLock};
+use tokio::sync::watch;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct WindowInfo {
@@ -18,6 +20,28 @@ impl PartialEq for WindowInfo {
             && self.rect.size.height == other.rect.size.height
     }
 }
+
+static HANDLE: OnceLock<tauri::async_runtime::JoinHandle<()>> = OnceLock::new();
+
+pub static WINDOWS: LazyLock<watch::Receiver<Vec<WindowInfo>>> = LazyLock::new(|| {
+    let windows = get_all_windows();
+    let windows_clone = windows.clone();
+    let (tx, rx) = watch::channel(windows);
+
+    HANDLE.get_or_init(|| tauri::async_runtime::spawn(async move {
+        let mut prev_windows = windows_clone;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let windows = get_all_windows();
+            if windows != prev_windows {
+                prev_windows = windows.clone();
+                let _ = tx.send(windows);
+            }
+        }
+    }));
+
+    rx
+});
 
 /// Returns a list of all normal-level windows across all monitors.
 #[cfg(target_os = "macos")]
