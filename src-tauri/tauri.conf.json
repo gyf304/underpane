@@ -4,11 +4,20 @@
   "version": "0.1.0",
   "identifier": "com.yifangu.activedesk",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../dist-ui",
+    "devUrl": "http://localhost:3000/",
+    "beforeBuildCommand": "cd ../src-ui && bun run build",
+    "beforeDevCommand": "cd ../src-ui && bun dev"
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [],
+    "windows": [
+      {
+        "label": "background",
+        "visible": false,
+        "url": "about:blank"
+      }
+    ],
     "security": {
       "csp": null
     },

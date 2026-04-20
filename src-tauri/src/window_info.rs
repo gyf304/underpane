@@ -31,7 +31,7 @@ pub static WINDOWS: LazyLock<watch::Receiver<Vec<WindowInfo>>> = LazyLock::new(|
     HANDLE.get_or_init(|| tauri::async_runtime::spawn(async move {
         let mut prev_windows = windows_clone;
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             let windows = get_all_windows();
             if windows != prev_windows {
                 prev_windows = windows.clone();
@@ -73,6 +73,26 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
     type CFTypeRef = *const c_void;
     type CFDictionaryRef = *const c_void;
     type CGWindowID = u32;
+
+    /// RAII wrapper for Core Foundation objects.
+    struct CFOwned(CFTypeRef);
+
+    impl CFOwned {
+        /// Takes ownership of a CF object. Returns `None` if the pointer is null.
+        unsafe fn new(ptr: CFTypeRef) -> Option<Self> {
+            if ptr.is_null() { None } else { Some(Self(ptr)) }
+        }
+
+        fn as_ptr(&self) -> CFTypeRef {
+            self.0
+        }
+    }
+
+    impl Drop for CFOwned {
+        fn drop(&mut self) {
+            unsafe { CFRelease(self.0); }
+        }
+    }
 
     #[allow(non_upper_case_globals)]
     const kCFNumberSInt32Type: isize = 3;
@@ -118,92 +138,65 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
     const kCFStringEncodingUTF8: u32 = 0x08000100;
 
     // Get the focused window ID using AX API
-    let focused_window_id = unsafe {
-        // Create CFStringRef for AX attributes
-        #[allow(non_snake_case)]
-        let kAXFocusedApplicationAttribute = CFStringCreateWithCString(
+    let focused_window_id: Option<u32> = (|| unsafe {
+        let ax_focused_app = CFOwned::new(CFStringCreateWithCString(
             std::ptr::null(),
             b"AXFocusedApplication\0".as_ptr(),
             kCFStringEncodingUTF8,
-        );
-        #[allow(non_snake_case)]
-        let kAXFocusedWindowAttribute = CFStringCreateWithCString(
+        ));
+        let ax_focused_window = CFOwned::new(CFStringCreateWithCString(
             std::ptr::null(),
             b"AXFocusedWindow\0".as_ptr(),
             kCFStringEncodingUTF8,
-        );
+        ));
 
-        if kAXFocusedApplicationAttribute.is_null() || kAXFocusedWindowAttribute.is_null() {
-            return Vec::new();
+        let (Some(ax_focused_app), Some(ax_focused_window)) = (ax_focused_app, ax_focused_window)
+        else {
+            return None;
+        };
+
+        let system_wide = CFOwned::new(AXUIElementCreateSystemWide())?;
+
+        let mut focused_app: CFTypeRef = std::ptr::null();
+        if AXUIElementCopyAttributeValue(
+            system_wide.as_ptr(),
+            ax_focused_app.as_ptr(),
+            &mut focused_app as *mut _ as *mut CFTypeRef,
+        ) != 0 {
+            return None;
         }
+        let focused_app = CFOwned::new(focused_app)?;
 
-        let system_wide = AXUIElementCreateSystemWide();
-        if system_wide.is_null() {
-            CFRelease(kAXFocusedApplicationAttribute);
-            CFRelease(kAXFocusedWindowAttribute);
-            None
-        } else {
-            let mut focused_app: CFTypeRef = std::ptr::null();
-            let result = AXUIElementCopyAttributeValue(
-                system_wide,
-                kAXFocusedApplicationAttribute,
-                &mut focused_app as *mut _ as *mut CFTypeRef,
-            );
-
-            if result != 0 || focused_app.is_null() {
-                CFRelease(kAXFocusedApplicationAttribute);
-                CFRelease(kAXFocusedWindowAttribute);
-                CFRelease(system_wide);
-                None
-            } else {
-                let mut focused_window: CFTypeRef = std::ptr::null();
-                let result = AXUIElementCopyAttributeValue(
-                    focused_app,
-                    kAXFocusedWindowAttribute,
-                    &mut focused_window as *mut _ as *mut CFTypeRef,
-                );
-
-                if result != 0 || focused_window.is_null() {
-                    CFRelease(kAXFocusedApplicationAttribute);
-                    CFRelease(kAXFocusedWindowAttribute);
-                    CFRelease(focused_app);
-                    CFRelease(system_wide);
-                    None
-                } else {
-                    // println!("yo");
-                    let mut window_id: u32 = 0;
-                    _AXUIElementGetWindow(focused_window, &mut window_id as *mut _);
-
-                    CFRelease(kAXFocusedApplicationAttribute);
-                    CFRelease(kAXFocusedWindowAttribute);
-                    CFRelease(focused_window);
-                    CFRelease(focused_app);
-                    CFRelease(system_wide);
-
-                    if window_id != 0 {
-                        Some(window_id)
-                    } else {
-                        None
-                    }
-                }
-            }
+        let mut focused_window: CFTypeRef = std::ptr::null();
+        if AXUIElementCopyAttributeValue(
+            focused_app.as_ptr(),
+            ax_focused_window.as_ptr(),
+            &mut focused_window as *mut _ as *mut CFTypeRef,
+        ) != 0 {
+            return None;
         }
-    };
+        let focused_window = CFOwned::new(focused_window)?;
+
+        let mut window_id: u32 = 0;
+        _AXUIElementGetWindow(focused_window.as_ptr(), &mut window_id);
+        (window_id != 0).then_some(window_id)
+    })();
 
     unsafe {
-        let windows = CGWindowListCopyWindowInfo(
+        let windows_ptr = CGWindowListCopyWindowInfo(
             kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
             kCGNullWindowID,
         );
-        if windows.is_null() {
-            return Vec::new();
-        }
 
-        let count = CFArrayGetCount(windows);
+        let Some(windows) = CFOwned::new(windows_ptr) else {
+            return Vec::new();
+        };
+
+        let count = CFArrayGetCount(windows.as_ptr());
         let mut window_infos = Vec::new();
 
         for i in 0..count {
-            let info = CFArrayGetValueAtIndex(windows, i) as CFDictionaryRef;
+            let info = CFArrayGetValueAtIndex(windows.as_ptr(), i) as CFDictionaryRef;
 
             let layer_ref = CFDictionaryGetValue(info, kCGWindowLayer);
             if layer_ref.is_null() {
@@ -218,7 +211,7 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
                 continue;
             }
             if layer < CGWindowLevelForKey(CGWindowLevelKey::NormalWindowLevelKey)
-                || layer >= CGWindowLevelForKey(CGWindowLevelKey::MaximumWindowLevelKey)
+                || layer >= CGWindowLevelForKey(CGWindowLevelKey::TornOffMenuWindowLevelKey)
             {
                 continue;
             }
@@ -246,7 +239,6 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
             }
             let rect = rect.assume_init();
 
-            // Compare window ID with focused window ID
             let focused = focused_window_id == Some(window_id);
 
             window_infos.push(WindowInfo {
@@ -264,8 +256,6 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
                 focused,
             });
         }
-
-        CFRelease(windows);
 
         window_infos
     }

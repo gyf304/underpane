@@ -24,13 +24,8 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
         }).unwrap()
         .to_owned();
 
-    // Use file-name comparison rather than full-path equality so that
-    // FSEvents path canonicalization (symlink resolution) doesn't cause
-    // misses.
     let cfg_filename = cfg_path.file_name().map(|n| n.to_owned());
 
-    // `tx` is moved into the closure; it stays alive as long as the watcher
-    // does, keeping all receivers valid.
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
 
@@ -43,8 +38,6 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
             return;
         }
 
-        // Be permissive: Modify and Create cover normal saves;
-        // Any covers macOS FSEvents rename-on-save (e.g. vim).
         match event.kind {
             EventKind::Modify(_) | EventKind::Create(_) | EventKind::Any => {}
             _ => return,

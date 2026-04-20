@@ -72,9 +72,6 @@ class MouseSimulator {
 	}
 }
 
-// Inject real cursor position from the OS via Tauri events.
-// The Rust side emits "cursor-position" every 50ms with { x, y } in window-local
-// logical CSS pixels (physical coords minus monitor origin, divided by scale factor).
 const mouse = new MouseSimulator();
 
 const webviewWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
@@ -107,6 +104,14 @@ class ActiveDesk extends EventTarget {
 
 	get coverage() {
 		return coverage;
+	}
+
+	get coverageThreshold() {
+		return coverageThreshold;
+	}
+
+	set coverageThreshold(threshold) {
+		coverageThreshold = threshold;
 	}
 
 	get config() {

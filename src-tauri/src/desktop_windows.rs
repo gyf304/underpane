@@ -109,10 +109,36 @@ fn wallpaper_url(wallpaper: &str) -> url::Url {
     u
 }
 
+fn logical_monitor_rect(index: usize) -> Option<LogicalRect<f64, f64>> {
+    let monitors = MONITORS.borrow();
+    let Some(monitor) = monitors.get(index) else {
+        return None;
+    };
+    let work_area_physical = monitor.work_area();
+    let scale_factor = monitor.scale_factor();
+    Some(LogicalRect {
+        position: LogicalPosition {
+            x: work_area_physical.position.x as f64 / scale_factor,
+            y: work_area_physical.position.y as f64 / scale_factor,
+        },
+        size: LogicalSize {
+            width: work_area_physical.size.width as f64 / scale_factor,
+            height: work_area_physical.size.height as f64 / scale_factor,
+        },
+    })
+}
+
+fn calc_visibility(index: usize) -> Option<(f64, bool)> {
+    let Some(rect) = logical_monitor_rect(index) else {
+        return None;
+    };
+    let visible_windows = filter_windows(&WINDOWS.borrow(), &rect).clone();
+    let focused = (&visible_windows).into_iter().filter(|w| w.focused).count() == 0;
+    let cov = coverage(&visible_windows, &rect);
+    Some((cov, focused))
+}
+
 /// Manages a single desktop window for one monitor index.
-///
-/// Holds a broadcast receiver for [`AppEvent`] so it can react to config and
-/// monitor changes independently without a global scan.
 #[derive(Clone)]
 pub struct DesktopWindow {
     /// 0-based monitor index.
@@ -136,8 +162,17 @@ impl DesktopWindow {
             .get_monitor(index)
             .ok_or(anyhow::anyhow!("Invalid config index"))?
             .clone();
-        let serialized_wallpaper_config = serde_json::to_string(&monitor_config.config)?;
         let monitor_clone = monitor.clone();
+
+        let mut init_lines: Vec<String> = vec![];
+        if let Ok(config) = serde_json::to_string(&monitor_config.config) {
+            init_lines.push(format!("config = {config};"));
+        }
+        if let Some((cov, focused)) = calc_visibility(index) {
+            init_lines.push(format!("coverage = {cov};"));
+            init_lines.push(format!("focused = {focused};"));
+        }
+        let init_str = init_lines.join(";\n");
 
         let window = Arc::new(
             tauri::WebviewWindowBuilder::new(
@@ -155,7 +190,7 @@ impl DesktopWindow {
             .shadow(false)
             .initialization_script(&format!("(function () {{
                 {RUNTIME_JS};
-                config = {serialized_wallpaper_config};
+                {init_str};
             }})();"))
             .build()?,
         );
@@ -176,30 +211,13 @@ impl DesktopWindow {
             let _ = desktop_window_clone.run_window_async().await;
         });
         desktop_window.handle = Some(Arc::new(handle));
+        let _ = desktop_window.resize_window(&monitor);
 
         Ok(desktop_window)
     }
 
     pub fn monitor(&self) -> Option<tauri::Monitor> {
         MONITORS.borrow().get(self.index).cloned()
-    }
-
-    pub fn logical_monitor_rect(&self) -> Option<LogicalRect<f64, f64>> {
-        let Some(monitor) = self.monitor() else {
-            return None;
-        };
-        let work_area_physical = monitor.work_area();
-        let scale_factor = monitor.scale_factor();
-        Some(LogicalRect {
-            position: LogicalPosition {
-                x: work_area_physical.position.x as f64 / scale_factor,
-                y: work_area_physical.position.y as f64 / scale_factor,
-            },
-            size: LogicalSize {
-                width: work_area_physical.size.width as f64 / scale_factor,
-                height: work_area_physical.size.height as f64 / scale_factor,
-            },
-        })
     }
 
     pub fn config(&self) -> Option<MonitorConfig> {
@@ -217,41 +235,16 @@ impl DesktopWindow {
             )
     }
 
-
     async fn run_window_async(&self) -> Result<(), tauri::Error> {
         let mut config_rx = CONFIG.clone();
         let mut monitors_rx = MONITORS.clone();
         let mut windows_rx = WINDOWS.clone();
 
-        let mut sync_tick = tokio::time::interval(std::time::Duration::from_secs(1));
         let mut cursor_tick = tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / 30.0));
 
         let mut tracked_coverage = Tracker::new(0.0);
         let mut tracked_focused = Tracker::new(false);
         let mut tracked_cursor_position = Tracker::new((0.0, 0.0));
-
-        macro_rules! sync_visibility {
-            ($force: expr) => {
-                let Some(rect) = self.logical_monitor_rect() else {
-                    continue
-                };
-                let windows = windows_rx.borrow();
-                let visible_windows = filter_windows(&windows, &rect);
-                if tracked_coverage.update(coverage(&visible_windows, &rect)) || $force {
-                    let _ = self.emit(
-                        "desktop-coverage",
-                        serde_json::json!({ "coverage": tracked_coverage.get() }),
-                    );
-                }
-                let focused = visible_windows.into_iter().filter(|w| w.focused).count() == 0;
-                if tracked_focused.update(focused) || $force {
-                    let _ = self.emit(
-                        "desktop-focus",
-                        serde_json::json!({ "focused": tracked_focused.get() }),
-                    );
-                }
-            };
-        }
 
         loop {
             tokio::select! {
@@ -271,10 +264,21 @@ impl DesktopWindow {
                     let _ = self.resize_window(&monitor);
                 }
                 Ok(_) = windows_rx.changed() => {
-                    sync_visibility!(false);
-                }
-                _ = sync_tick.tick() => {
-                    sync_visibility!(true);
+                    let Some((cov, focused)) = calc_visibility(self.index) else {
+                        continue
+                    };
+                    if tracked_coverage.update(cov) {
+                        let _ = self.emit(
+                            "desktop-coverage",
+                            serde_json::json!({ "coverage": tracked_coverage.get() }),
+                        );
+                    }
+                    if tracked_focused.update(focused) {
+                        let _ = self.emit(
+                            "desktop-focus",
+                            serde_json::json!({ "focused": tracked_focused.get() }),
+                        );
+                    }
                 }
                 _ = cursor_tick.tick() => {
                     let Ok(cursor) = self.window.app_handle().cursor_position() else {
@@ -306,11 +310,11 @@ impl DesktopWindow {
 
     fn resize_window(&self, monitor: &tauri::Monitor) -> Result<(), tauri::Error> {
         let window = self.window.clone();
-        let size = monitor.size().clone();
         let position = monitor.position().clone();
+        let size = monitor.size().clone();
         window.clone().run_on_main_thread(move || {
-            window.set_size(size).ok();
-            window.set_position(position).ok();
+            let _ = window.set_position(position);
+            let _ = window.set_size(size);
         })?;
         Ok(())
     }
@@ -321,5 +325,6 @@ impl Drop for DesktopWindow {
         if let Some(handle) = &self.handle {
             handle.abort();
         }
+        let _ = self.window.close();
     }
 }
