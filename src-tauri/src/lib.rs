@@ -4,6 +4,7 @@ mod monitor_info;
 mod protocol;
 mod utils;
 mod window_info;
+mod wallpapers;
 
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};

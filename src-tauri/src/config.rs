@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, fs, io, path::PathBuf};
 use std::sync::{ LazyLock, OnceLock };
 
+use crate::wallpapers::WallpaperManifest;
+
 use tokio::sync::watch;
 
 use directories::ProjectDirs;
@@ -139,6 +141,31 @@ impl Config {
     pub fn get_monitor(&self, index: usize) -> Option<&MonitorConfig> {
         let i1 = index + 1;
         self.monitors.get(&format!("{i1}"))
+    }
+
+    /// Scans the wallpapers directory and loads each subdirectory's `manifest.toml`.
+    /// Returns a map from wallpaper directory name to its manifest.
+    /// Subdirectories that are missing a manifest or have an unparseable one are silently skipped.
+    pub fn wallpapers(&self) -> Result<BTreeMap<String, WallpaperManifest>, ConfigError> {
+        let dir = self.get_wallpapers_dir()?;
+        let mut map = BTreeMap::new();
+
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let manifest_path = entry.path().join("index.toml");
+            match WallpaperManifest::load(manifest_path) {
+                Ok(manifest) => {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    map.insert(name, manifest);
+                }
+                Err(_) => continue,
+            }
+        }
+
+        Ok(map)
     }
 
     /// Persist config to disk, creating parent directories as needed.
