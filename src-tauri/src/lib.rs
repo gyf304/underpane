@@ -106,6 +106,7 @@ pub fn run() {
                             )
                             .title("Configure")
                             .inner_size(800.0, 600.0)
+                            .maximizable(false)
                             .build();
                         }
                     }
