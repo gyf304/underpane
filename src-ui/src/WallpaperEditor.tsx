@@ -242,77 +242,61 @@ export function WallpaperEditor() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [loading, setLoading] = useState(true);
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    Promise.all([readConfig(), listMonitors(), wallpapers()]).then(([cfg, monitors, wpMap]) => {
-      setConfig(cfg);
-      setMonitorList(monitors);
-      setWallpaperMap(wpMap);
-      setSelectedId(monitors[0]?.id ?? null);
-      setLoading(false);
-    });
+    Promise.all([readConfig(), listMonitors(), wallpapers()])
+      .then(([cfg, monitors, wpMap]) => {
+        setConfig(cfg);
+        setMonitorList(monitors);
+        setWallpaperMap(wpMap);
+        setSelectedId(monitors[0]?.id ?? null);
+        setLoading(false);
+      });
   }, []);
 
-  const patchMonitor = useCallback(
-    (id: string, patch: Partial<{ wallpaper: string | null; config: Record<string, unknown>; }>) => {
-      setConfig(prev => {
-        if (!prev) return prev;
-        const existing = prev.monitors[id] ?? { wallpaper: null, config: {} };
-        return {
-          ...prev,
-          monitors: {
-            ...prev.monitors,
-            [id]: { ...existing, ...patch } as SystemConfig["monitors"][string],
-          },
-        };
-      });
-      setStatus("unsaved");
-    },
-    []
-  );
+  const handleWallpaperChange = (monitorId: string, wallpaperId: string | null) => {
+    setConfig(prev => {
+      if (!prev) return prev;
+      const monitors = { ...prev.monitors };
+      if (wallpaperId) {
+        monitors[monitorId] = { wallpaper: wallpaperId, config: {} };
+      } else {
+        delete monitors[monitorId];
+      }
+      return { ...prev, monitors };
+    });
+    setStatus("unsaved");
+  };
 
-  const handleWallpaperChange = useCallback(
-    (monitorId: string, wallpaperId: string | null) => {
-      patchMonitor(monitorId, { wallpaper: wallpaperId, config: {} });
-    },
-    [patchMonitor]
-  );
+  const handleFieldChange = (monitorId: string, key: string, value: unknown) => {
+    setConfig(prev => {
+      if (!prev) return prev;
+      const m = prev.monitors?.[monitorId];
+      if (!m) return prev;
+      const newCfg = { ...m.config };
+      if (value === undefined || value === null) {
+        delete newCfg[key];
+      } else {
+        newCfg[key] = value;
+      }
+      return {
+        ...prev,
+        monitors: { ...prev.monitors, [monitorId]: { ...m, config: newCfg } },
+      };
+    });
+    setStatus("unsaved");
+  };
 
-  const handleFieldChange = useCallback(
-    (monitorId: string, key: string, value: unknown) => {
-      setConfig(prev => {
-        if (!prev) return prev;
-        const m = prev.monitors[monitorId];
-        if (!m) return prev;
-        const newCfg = { ...m.config };
-        if (value === undefined || value === null) {
-          delete newCfg[key];
-        } else {
-          newCfg[key] = value;
-        }
-        return {
-          ...prev,
-          monitors: { ...prev.monitors, [monitorId]: { ...m, config: newCfg } },
-        };
-      });
-      setStatus("unsaved");
-    },
-    []
-  );
-
-  const handleSave = useCallback(async () => {
+  const handleSave = async () => {
     if (!config || status !== "unsaved") return;
     setStatus("saving");
-    if (savedTimer.current) clearTimeout(savedTimer.current);
     try {
       await writeConfig(config);
       setStatus("saved");
-      savedTimer.current = setTimeout(() => setStatus("idle"), 2500);
     } catch {
       setStatus("error");
     }
-  }, [config, status]);
+  };
 
   if (loading) {
     return (
@@ -323,10 +307,8 @@ export function WallpaperEditor() {
   }
 
   const DEFAULT_KEY = "default";
-  const selMonitor = selectedId
-    ? (config?.monitors[selectedId] ?? { wallpaper: null, config: {} })
-    : null;
-  const selWallpaper = selMonitor?.wallpaper ?? null;
+  const selMonitor = selectedId ? config?.monitors?.[selectedId] : undefined;
+  const selWallpaper = selMonitor?.wallpaper;
   const selManifest = selWallpaper ? wallpaperMap.get(selWallpaper) : null;
 
   const validFields: Array<[string, WallpaperConfigSchema]> = selManifest
@@ -358,7 +340,7 @@ export function WallpaperEditor() {
 
         <div className="space-y-0.5">
           {monitorList.map(m => {
-            const mc = config?.monitors[m.id];
+            const mc = config?.monitors?.[m.id];
             const wpName = mc?.wallpaper
               ? (wallpaperMap.get(mc.wallpaper)?.name ?? mc.wallpaper)
               : "—";
@@ -381,7 +363,7 @@ export function WallpaperEditor() {
           })}
           <div className="my-1 border-t" />
           {(() => {
-            const dc = config?.monitors[DEFAULT_KEY];
+            const dc = config?.monitors?.[DEFAULT_KEY];
             const wpName = dc?.wallpaper
               ? (wallpaperMap.get(dc.wallpaper)?.name ?? dc.wallpaper)
               : "—";
@@ -467,7 +449,7 @@ export function WallpaperEditor() {
                             key={key}
                             fieldKey={key}
                             field={field}
-                            value={selMonitor?.config[key]}
+                            value={selMonitor?.config?.[key]}
                             onChange={v => handleFieldChange(selectedId, key, v)}
                           />
                         ))}

@@ -1,5 +1,11 @@
+export interface MonitorConfig {
+  wallpaper: string;
+  config?: Record<string, unknown>;
+}
+
 export interface SystemConfig {
-  monitors: Record<string, { wallpaper: string | null; config: Record<string, unknown>; }>;
+  wallpapers_directory?: string;
+  monitors?: Record<string, MonitorConfig>;
 }
 
 export interface MonitorInfo {

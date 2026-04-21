@@ -1,5 +1,6 @@
 mod config;
 mod desktop_windows;
+mod handlers;
 mod monitor_info;
 mod protocol;
 mod utils;
@@ -20,31 +21,15 @@ use crate::monitor_info::MONITORS;
 static DESKTOP_WINDOWS: LazyLock<Mutex<Vec<Option<DesktopWindow>>>> =
     LazyLock::new(|| Mutex::new(vec![]));
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn get_config(window: tauri::Window) -> Result<toml::Table, serde_json::Value> {
-    let label = window.label();
-    let err = serde_json::json!(["Not a monitor window"]);
-    let idstr = label.strip_prefix("monitor-").ok_or(err.clone())?;
-    let index = idstr.parse::<usize>().map_err(|_| err.clone())?;
-    if index < 1 {
-        return Err(serde_json::json!(["Not a monitor window"]));
-    }
-    let index = index - 1;
-    let config = CONFIG.borrow();
-    let monitor_config = config.get_monitor(index).ok_or(err.clone())?;
-    Ok(monitor_config.config.clone())
-}
-
 pub fn sync_desktop_windows(app: &tauri::AppHandle) -> Result<(), tauri::Error> {
     let mut windows = DESKTOP_WINDOWS.lock().unwrap();
     let monitor_count = MONITORS.borrow().len();
-    let config = CONFIG.borrow();
+    let config = CONFIG.borrow().clone();
 
     windows.resize(monitor_count, None);
 
     for i in 0..monitor_count {
-        let monitor_config = config.get_monitor(i);
+        let monitor_config = config.get_monitor_config(i);
         if monitor_config.is_some() {
             if windows[i].is_none() {
                 windows[i] = Some(DesktopWindow::new(app, i)?);
@@ -64,7 +49,12 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_config])
+        .invoke_handler(tauri::generate_handler![
+            handlers::read_system_config,
+            handlers::write_system_config,
+            handlers::list_monitors,
+            handlers::list_wallpapers,
+        ])
         .register_asynchronous_uri_scheme_protocol(
             "activedesk-wallpaper",
             |_ctx, request, responder| {
@@ -88,8 +78,15 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            let refresh_wallpapers = MenuItem::with_id(
+                app,
+                "refresh_wallpapers",
+                "Refresh Wallpapers",
+                true,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&configure, &open_config_folder, &quit])?;
+            let menu = Menu::with_items(app, &[&configure, &open_config_folder, &refresh_wallpapers, &quit])?;
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -109,6 +106,13 @@ pub fn run() {
                             .inner_size(800.0, 600.0)
                             .maximizable(false)
                             .build();
+                        }
+                    }
+                    "refresh_wallpapers" => {
+                        for (label, window) in app.webview_windows() {
+                            if label.starts_with("monitor-") {
+                                let _ = window.eval("window.location.reload()");
+                            }
                         }
                     }
                     "open_config_folder" => {
@@ -142,10 +146,14 @@ pub fn run() {
                 loop {
                     tokio::select! {
                         Ok(_) = monitors_rx.changed() => {
-                            let _ = sync_desktop_windows(&handle);
+                            if let Err(e) = sync_desktop_windows(&handle) {
+                                eprintln!("Error syncing windows: {e}");
+                            }
                         }
                         Ok(_) = config_rx.changed() => {
-                            let _ = sync_desktop_windows(&handle);
+                            if let Err(e) = sync_desktop_windows(&handle) {
+                                eprintln!("Error syncing windows: {e}");
+                            }
                         }
                     }
                 }

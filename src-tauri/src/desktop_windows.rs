@@ -159,7 +159,7 @@ impl DesktopWindow {
         let label = format!("monitor-{i1}");
         let monitor_config = CONFIG
             .borrow()
-            .get_monitor(index)
+            .get_monitor_config(index)
             .ok_or(anyhow::anyhow!("Invalid config index"))?
             .clone();
         let monitor_clone = monitor.clone();
@@ -220,8 +220,8 @@ impl DesktopWindow {
         MONITORS.borrow().get(self.index).cloned()
     }
 
-    pub fn config(&self) -> Option<MonitorConfig> {
-        CONFIG.borrow().get_monitor(self.index).cloned()
+    pub fn monitor_config(&self) -> Option<MonitorConfig> {
+        CONFIG.borrow().get_monitor_config(self.index).cloned()
     }
 
     pub fn emit<S>(&self, event: &str, payload: S) -> Result<(), tauri::Error> where S: Serialize + Clone {
@@ -249,12 +249,12 @@ impl DesktopWindow {
         loop {
             tokio::select! {
                 Ok(_) = config_rx.changed() => {
-                    let Some(config) = self.config() else {
+                    let Some(monitor_config) = self.monitor_config() else {
                         continue
                     };
                     let _ = self.emit(
                         "config-change",
-                        serde_json::json!({ "config": config }),
+                        serde_json::json!({ "config": monitor_config.config }),
                     );
                 }
                 Ok(_) = monitors_rx.changed() => {

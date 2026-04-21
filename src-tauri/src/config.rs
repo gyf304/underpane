@@ -47,7 +47,13 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
 
         match Config::load() {
             Ok(new_config) => {
-                tx.send(new_config).ok();
+                tx.send_if_modified(|current| {
+                    if *current == new_config {
+                        return false;
+                    }
+                    *current = new_config;
+                    true
+                });
             }
             Err(e) => eprintln!("activedesk: config reload failed: {e}"),
         }
@@ -60,7 +66,7 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
     rx
 });
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,7 +75,7 @@ pub struct Config {
     pub monitors: BTreeMap<String, MonitorConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MonitorConfig {
     pub wallpaper: String,
     #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
@@ -138,9 +144,9 @@ impl Config {
         Ok(path)
     }
 
-    pub fn get_monitor(&self, index: usize) -> Option<&MonitorConfig> {
+    pub fn get_monitor_config(&self, index: usize) -> Option<&MonitorConfig> {
         let i1 = index + 1;
-        self.monitors.get(&format!("{i1}"))
+        self.monitors.get(&i1.to_string()).or(self.monitors.get("default"))
     }
 
     /// Scans the wallpapers directory and loads each subdirectory's `manifest.toml`.
