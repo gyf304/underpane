@@ -261,9 +261,133 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
     }
 }
 
+/// Returns a list of all top-level windows on Windows.
+#[cfg(windows)]
+pub fn get_all_windows_windows() -> Vec<WindowInfo> {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+    use windows::Win32::Graphics::Dwm::{
+        DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+    };
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, IsIconic, IsWindowVisible,
+        GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+    };
+
+    struct Ctx {
+        focused: HWND,
+        windows: Vec<WindowInfo>,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
+
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return BOOL(1);
+            }
+            if IsIconic(hwnd).as_bool() {
+                return BOOL(1);
+            }
+
+            // Filter cloaked windows (hidden UWP / virtual-desktop windows).
+            let mut cloaked: u32 = 0;
+            if DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_CLOAKED,
+                &mut cloaked as *mut _ as *mut _,
+                std::mem::size_of::<u32>() as u32,
+            )
+            .is_ok()
+                && cloaked != 0
+            {
+                return BOOL(1);
+            }
+
+            // Filter tool windows (also excludes our own desktop wallpaper
+            // windows, which we tag with WS_EX_TOOLWINDOW).
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            if (ex & WS_EX_TOOLWINDOW.0 as isize) != 0 {
+                return BOOL(1);
+            }
+
+            // Filter the shell windows by class name.
+            let mut class_buf = [0u16; 256];
+            let n = GetClassNameW(hwnd, &mut class_buf);
+            if n > 0 {
+                let class = String::from_utf16_lossy(&class_buf[..n as usize]);
+                if matches!(
+                    class.as_str(),
+                    "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+                ) {
+                    return BOOL(1);
+                }
+            }
+
+            // Prefer DWM extended frame bounds over GetWindowRect to avoid the
+            // invisible drop-shadow margin.
+            let mut rect = RECT::default();
+            let bounds_ok = DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                &mut rect as *mut _ as *mut _,
+                std::mem::size_of::<RECT>() as u32,
+            )
+            .is_ok();
+            if !bounds_ok {
+                return BOOL(1);
+            }
+
+            // Convert physical pixels → logical (CSS-equivalent) coordinates by
+            // dividing by the per-window DPI scale.
+            let dpi = GetDpiForWindow(hwnd);
+            let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
+
+            let id = hwnd.0 as usize as u32;
+            let focused = hwnd == ctx.focused;
+
+            ctx.windows.push(WindowInfo {
+                id,
+                rect: LogicalRect {
+                    position: LogicalPosition {
+                        x: rect.left as f64 / scale,
+                        y: rect.top as f64 / scale,
+                    },
+                    size: LogicalSize {
+                        width: (rect.right - rect.left) as f64 / scale,
+                        height: (rect.bottom - rect.top) as f64 / scale,
+                    },
+                },
+                focused,
+            });
+        }
+
+        BOOL(1)
+    }
+
+    let mut ctx = Ctx {
+        focused: unsafe { GetForegroundWindow() },
+        windows: Vec::new(),
+    };
+
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
+        let _ = EnumWindows(
+            Some(enum_proc),
+            LPARAM(&mut ctx as *mut _ as isize),
+        );
+    }
+
+    ctx.windows
+}
+
 pub fn get_all_windows() -> Vec<WindowInfo> {
     #[cfg(target_os = "macos")]
     return get_all_windows_macos();
+
+    #[cfg(windows)]
+    return get_all_windows_windows();
 
     #[allow(unreachable_code)]
     Vec::new()

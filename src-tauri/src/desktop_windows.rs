@@ -18,6 +18,8 @@ const RUNTIME_JS: &str = include_str!("runtime.js");
 pub enum BackgroundError {
     NotMainThread,
     Tauri(tauri::Error),
+    #[cfg(windows)]
+    Win32(windows::core::Error),
 }
 
 impl std::fmt::Display for BackgroundError {
@@ -25,7 +27,16 @@ impl std::fmt::Display for BackgroundError {
         match self {
             BackgroundError::NotMainThread => write!(f, "must be called on the main thread"),
             BackgroundError::Tauri(e) => write!(f, "{e}"),
+            #[cfg(windows)]
+            BackgroundError::Win32(e) => write!(f, "win32: {e}"),
         }
+    }
+}
+
+#[cfg(windows)]
+impl From<windows::core::Error> for BackgroundError {
+    fn from(e: windows::core::Error) -> Self {
+        BackgroundError::Win32(e)
     }
 }
 
@@ -43,6 +54,8 @@ pub fn set_window_as_background(
 ) -> Result<(), BackgroundError> {
     #[cfg(target_os = "macos")]
     set_window_as_background_macos(window, monitor)?;
+    #[cfg(windows)]
+    set_window_as_background_windows(window, monitor)?;
     Ok(())
 }
 
@@ -101,6 +114,140 @@ fn set_window_as_background_macos(
     }
 
     Ok(())
+}
+
+/// Reparents the given Tauri webview window into a `WorkerW` sibling of
+/// Progman so it sits between the desktop wallpaper and the desktop icons.
+///
+/// Uses the well-known Progman `0x052C` message trick (as employed by
+/// Lively Wallpaper / Wallpaper Engine) to spawn the WorkerW.
+#[cfg(windows)]
+fn set_window_as_background_windows(
+    window: &tauri::WebviewWindow,
+    monitor: &tauri::Monitor,
+) -> Result<(), BackgroundError> {
+    use windows::core::{BOOL, PCWSTR};
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, FindWindowExW, FindWindowW, GetWindowLongPtrW, SendMessageTimeoutW, SetParent,
+        SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOP, SMTO_NORMAL,
+        SWP_NOACTIVATE, SWP_SHOWWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
+    };
+
+    let hwnd = window.hwnd()?;
+
+    unsafe {
+        // 1. Find Progman.
+        let progman = FindWindowW(
+            PCWSTR(wide("Progman").as_ptr()),
+            PCWSTR::null(),
+        )?;
+
+        // 2. Tell Progman to spawn a WorkerW behind the desktop icons.
+        let mut result: usize = 0;
+        SendMessageTimeoutW(
+            progman,
+            0x052C,
+            WPARAM(0),
+            LPARAM(0),
+            SMTO_NORMAL,
+            1000,
+            Some(&mut result as *mut _ as *mut _),
+        );
+
+        // 3. Walk top-level windows, find the WorkerW that is a sibling of
+        //    Progman and is *not* the parent of `SHELLDLL_DefView` — that is
+        //    the one that lives behind the icon layer.
+        struct Ctx {
+            worker_w: HWND,
+        }
+        unsafe extern "system" fn enum_proc(top: HWND, lparam: LPARAM) -> BOOL {
+            let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
+            // SHELLDLL_DefView lives as a child of one WorkerW (or Progman) and
+            // hosts the icons. The WorkerW we want is the *next* one — a
+            // top-level WorkerW that has no SHELLDLL_DefView child.
+            let shell_view = unsafe {
+                FindWindowExW(
+                    Some(top),
+                    None,
+                    PCWSTR(wide("SHELLDLL_DefView").as_ptr()),
+                    PCWSTR::null(),
+                )
+            };
+            if shell_view.is_ok() && !shell_view.unwrap().is_invalid() {
+                // Found the WorkerW that hosts icons; the WorkerW *behind* the
+                // icons is its next sibling at the top level.
+                let next = unsafe {
+                    FindWindowExW(
+                        None,
+                        Some(top),
+                        PCWSTR(wide("WorkerW").as_ptr()),
+                        PCWSTR::null(),
+                    )
+                };
+                if let Ok(next) = next {
+                    if !next.is_invalid() {
+                        ctx.worker_w = next;
+                        return BOOL(0); // stop enumeration
+                    }
+                }
+            }
+            BOOL(1)
+        }
+
+        let mut ctx = Ctx {
+            worker_w: HWND::default(),
+        };
+        let _ = EnumWindows(
+            Some(enum_proc),
+            LPARAM(&mut ctx as *mut _ as isize),
+        );
+
+        // Fallback: if no WorkerW was found behind the icons, parent under
+        // Progman directly. The window will then sit *above* desktop icons,
+        // which is still better than nothing.
+        let parent = if ctx.worker_w.is_invalid() {
+            progman
+        } else {
+            ctx.worker_w
+        };
+
+        // 4. Strip decorations & taskbar visibility, mark non-activating.
+        SetWindowLongPtrW(hwnd, GWL_STYLE, (WS_POPUP.0 | WS_VISIBLE.0) as isize);
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(
+            hwnd,
+            GWL_EXSTYLE,
+            ex | (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as isize,
+        );
+
+        // 5. Reparent under WorkerW.
+        let _ = SetParent(hwnd, Some(parent));
+
+        // 6. Position to cover the monitor in physical pixels (parent's client
+        //    area is the virtual screen).
+        let pos = monitor.position();
+        let size = monitor.size();
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOP),
+            pos.x,
+            pos.y,
+            size.width as i32,
+            size.height as i32,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        );
+
+        let _ = result;
+    }
+
+    Ok(())
+}
+
+/// Encodes a string as a NUL-terminated UTF-16 buffer for Win32 wide APIs.
+#[cfg(windows)]
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 fn wallpaper_url(wallpaper: &str) -> url::Url {
