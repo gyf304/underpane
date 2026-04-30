@@ -129,19 +129,17 @@ fn set_window_as_background_windows(
     use windows::core::{BOOL, PCWSTR};
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, FindWindowExW, FindWindowW, GetWindowLongPtrW, SendMessageTimeoutW, SetParent,
-        SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOP, SMTO_NORMAL,
-        SWP_NOACTIVATE, SWP_SHOWWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
+        EnumWindows, FindWindowExW, FindWindowW, GetClassNameW, GetWindowLongPtrW,
+        SendMessageTimeoutW, SetParent, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
+        HWND_BOTTOM, HWND_TOP, SMTO_NORMAL, SWP_NOACTIVATE, SWP_SHOWWINDOW, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
     };
 
     let hwnd = window.hwnd()?;
 
     unsafe {
         // 1. Find Progman.
-        let progman = FindWindowW(
-            PCWSTR(wide("Progman").as_ptr()),
-            PCWSTR::null(),
-        )?;
+        let progman = FindWindowW(PCWSTR(wide("Progman").as_ptr()), PCWSTR::null())?;
 
         // 2. Tell Progman to spawn a WorkerW behind the desktop icons.
         let mut result: usize = 0;
@@ -155,17 +153,14 @@ fn set_window_as_background_windows(
             Some(&mut result as *mut _ as *mut _),
         );
 
-        // 3. Walk top-level windows, find the WorkerW that is a sibling of
-        //    Progman and is *not* the parent of `SHELLDLL_DefView` — that is
-        //    the one that lives behind the icon layer.
+        // 3. Find whichever top-level window hosts the desktop icon layer
+        //    (SHELLDLL_DefView child). On some Windows versions this is a
+        //    WorkerW; on Windows 11 it's often Progman itself.
         struct Ctx {
-            worker_w: HWND,
+            icon_host: HWND,
         }
         unsafe extern "system" fn enum_proc(top: HWND, lparam: LPARAM) -> BOOL {
             let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
-            // SHELLDLL_DefView lives as a child of one WorkerW (or Progman) and
-            // hosts the icons. The WorkerW we want is the *next* one — a
-            // top-level WorkerW that has no SHELLDLL_DefView child.
             let shell_view = unsafe {
                 FindWindowExW(
                     Some(top),
@@ -175,44 +170,56 @@ fn set_window_as_background_windows(
                 )
             };
             if shell_view.is_ok() && !shell_view.unwrap().is_invalid() {
-                // Found the WorkerW that hosts icons; the WorkerW *behind* the
-                // icons is its next sibling at the top level.
-                let next = unsafe {
-                    FindWindowExW(
-                        None,
-                        Some(top),
-                        PCWSTR(wide("WorkerW").as_ptr()),
-                        PCWSTR::null(),
-                    )
-                };
-                if let Ok(next) = next {
-                    if !next.is_invalid() {
-                        ctx.worker_w = next;
-                        return BOOL(0); // stop enumeration
-                    }
-                }
+                ctx.icon_host = top;
+                return BOOL(0);
             }
             BOOL(1)
         }
-
         let mut ctx = Ctx {
-            worker_w: HWND::default(),
+            icon_host: HWND::default(),
         };
-        let _ = EnumWindows(
-            Some(enum_proc),
-            LPARAM(&mut ctx as *mut _ as isize),
-        );
+        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut ctx as *mut _ as isize));
 
-        // Fallback: if no WorkerW was found behind the icons, parent under
-        // Progman directly. The window will then sit *above* desktop icons,
-        // which is still better than nothing.
-        let parent = if ctx.worker_w.is_invalid() {
-            progman
+        // 4. Choose parent:
+        //    - If the icon host is a WorkerW, find the *other* WorkerW that
+        //      lives behind it (the classic Wallpaper Engine slot).
+        //    - If the icon host is Progman (Windows 11 common case), parent
+        //      under Progman directly and push to HWND_BOTTOM so we sit
+        //      behind SHELLDLL_DefView. Progman is always at HWND_BOTTOM in
+        //      the top-level Z-order, so everything else stays above us.
+        let icon_host_class = {
+            let mut buf = [0u16; 64];
+            let n = GetClassNameW(ctx.icon_host, &mut buf);
+            String::from_utf16_lossy(&buf[..n as usize])
+        };
+
+        let (parent, needs_bottom) = if icon_host_class == "WorkerW" {
+            // Find a WorkerW that is NOT the icon host.
+            let worker_class = wide("WorkerW");
+            let mut behind = HWND::default();
+            let mut cur = FindWindowExW(None, None, PCWSTR(worker_class.as_ptr()), PCWSTR::null());
+            while let Ok(w) = cur {
+                if w.is_invalid() {
+                    break;
+                }
+                if w != ctx.icon_host {
+                    behind = w;
+                    break;
+                }
+                cur = FindWindowExW(None, Some(w), PCWSTR(worker_class.as_ptr()), PCWSTR::null());
+            }
+            let p = if !behind.is_invalid() {
+                behind
+            } else {
+                progman
+            };
+            (p, false)
         } else {
-            ctx.worker_w
+            // icon_host is Progman: parent under it and sit behind its children.
+            (progman, true)
         };
 
-        // 4. Strip decorations & taskbar visibility, mark non-activating.
+        // 5. Strip decorations & taskbar visibility, mark non-activating.
         SetWindowLongPtrW(hwnd, GWL_STYLE, (WS_POPUP.0 | WS_VISIBLE.0) as isize);
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(
@@ -221,16 +228,32 @@ fn set_window_as_background_windows(
             ex | (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as isize,
         );
 
-        // 5. Reparent under WorkerW.
+        // 6. Reparent.
         let _ = SetParent(hwnd, Some(parent));
 
-        // 6. Position to cover the monitor in physical pixels (parent's client
-        //    area is the virtual screen).
+        // 7. Position to cover the monitor in physical pixels.
+        //    When parented under Progman, insert just behind SHELLDLL_DefView
+        //    so icons stay above us but we're in front of any deeper children
+        //    (e.g. the WorkerW child) that would otherwise occlude us.
         let pos = monitor.position();
         let size = monitor.size();
+        let shell_view = FindWindowExW(
+            Some(parent),
+            None,
+            PCWSTR(wide("SHELLDLL_DefView").as_ptr()),
+            PCWSTR::null(),
+        )
+        .unwrap_or_default();
+        let z = if needs_bottom && !shell_view.is_invalid() {
+            shell_view // just behind the icon layer
+        } else if needs_bottom {
+            HWND_BOTTOM
+        } else {
+            HWND_TOP
+        };
         let _ = SetWindowPos(
             hwnd,
-            Some(HWND_TOP),
+            Some(z),
             pos.x,
             pos.y,
             size.width as i32,
@@ -333,12 +356,14 @@ impl DesktopWindow {
             .focused(false)
             .skip_taskbar(true)
             .resizable(false)
-            .hidden_title(true)
+            // .hidden_title(true)
             .shadow(false)
-            .initialization_script(&format!("(function () {{
+            .initialization_script(&format!(
+                "(function () {{
                 {RUNTIME_JS};
                 {init_str};
-            }})();"))
+            }})();"
+            ))
             .build()?,
         );
         let window_clone = window.clone();
@@ -371,15 +396,14 @@ impl DesktopWindow {
         CONFIG.borrow().get_monitor_config(self.index).cloned()
     }
 
-    pub fn emit<S>(&self, event: &str, payload: S) -> Result<(), tauri::Error> where S: Serialize + Clone {
+    pub fn emit<S>(&self, event: &str, payload: S) -> Result<(), tauri::Error>
+    where
+        S: Serialize + Clone,
+    {
         let label = self.window.label().to_string();
         self.window
             .app_handle()
-            .emit_to(
-                EventTarget::WebviewWindow { label },
-                event,
-                payload,
-            )
+            .emit_to(EventTarget::WebviewWindow { label }, event, payload)
     }
 
     async fn run_window_async(&self) -> Result<(), tauri::Error> {

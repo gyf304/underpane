@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist-ui",
     "devUrl": "http://localhost:3000/",
-    "beforeBuildCommand": "cd ../src-ui && bun run build",
-    "beforeDevCommand": "cd ../src-ui && bun dev"
+    "beforeBuildCommand": "cd ../src-ui && bun install && bun run build",
+    "beforeDevCommand": "cd ../src-ui && bun install && bun dev"
   },
   "app": {
     "withGlobalTauri": true,
