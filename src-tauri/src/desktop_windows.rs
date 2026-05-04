@@ -5,10 +5,10 @@ use tauri::EventTarget;
 use tauri::Manager;
 use tauri::{LogicalPosition, LogicalRect, LogicalSize};
 
-use crate::config::MonitorConfig;
-use crate::config::CONFIG;
+use crate::config::{MonitorConfig, CONFIG};
 use crate::monitor_info::MONITORS;
 use crate::utils::Tracker;
+use crate::wallpapers::WallpaperManifest;
 use crate::window_info::WINDOWS;
 use crate::window_info::{coverage, filter_windows};
 
@@ -346,7 +346,6 @@ impl DesktopWindow {
             .focused(false)
             .skip_taskbar(true)
             .resizable(false)
-            // .hidden_title(true)
             .shadow(false)
             .initialization_script(&format!(
                 "(async function () {{
@@ -382,7 +381,15 @@ impl DesktopWindow {
     }
 
     pub fn monitor_config(&self) -> Option<MonitorConfig> {
-        CONFIG.borrow().get_monitor_config(self.index).cloned()
+        let mut monitor_config = CONFIG.borrow().get_monitor_config(self.index).cloned()?;
+
+        if let Ok(manifest) = WallpaperManifest::get(&monitor_config.wallpaper) {
+            for (key, value) in manifest.default_config() {
+                monitor_config.config.entry(key).or_insert(value);
+            }
+        }
+
+        Some(monitor_config)
     }
 
     pub fn emit<S>(&self, event: &str, payload: S) -> Result<(), tauri::Error>

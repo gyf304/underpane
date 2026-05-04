@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "activedesk",
+  "productName": "ActiveDesk",
   "version": "0.1.0",
   "identifier": "com.yifangu.activedesk",
   "build": {
@@ -15,7 +15,7 @@
       {
         "label": "background",
         "visible": false,
-        "url": "about:blank"
+        "url": "blank.html"
       }
     ],
     "security": {

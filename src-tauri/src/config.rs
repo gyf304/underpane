@@ -102,7 +102,7 @@ impl Default for Config {
 }
 
 /// Returns `~/Library/Application Support/.../config.toml` on macOS.
-fn config_path() -> Option<PathBuf> {
+pub fn config_path() -> Option<PathBuf> {
     ProjectDirs::from("com", "yifangu", "activedesk").map(|d| d.config_dir().join("config.toml"))
 }
 
@@ -171,8 +171,7 @@ impl Config {
             if !entry.file_type()?.is_dir() {
                 continue;
             }
-            let manifest_path = entry.path().join("index.toml");
-            match WallpaperManifest::load(manifest_path) {
+            match WallpaperManifest::load(entry.path()) {
                 Ok(manifest) => {
                     let name = entry.file_name().to_string_lossy().into_owned();
                     map.insert(name, manifest);

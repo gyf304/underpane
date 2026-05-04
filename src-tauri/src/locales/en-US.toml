@@ -1,0 +1,4 @@
+[tray]
+configure = "Configure"
+refresh_wallpapers = "Refresh Wallpapers"
+quit = "Quit"

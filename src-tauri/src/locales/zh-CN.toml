@@ -1,0 +1,4 @@
+[tray]
+configure = "设置"
+refresh_wallpapers = "刷新壁纸"
+quit = "退出"

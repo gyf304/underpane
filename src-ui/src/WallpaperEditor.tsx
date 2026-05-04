@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   type SystemConfig,
@@ -19,7 +20,8 @@ import {
   type WallpaperConfigSchema,
   type SaveStatus,
 } from "./WallpaperEditor.types";
-import { readConfig, writeConfig, listMonitors, wallpapers } from "./WallpaperEditor.api";
+import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir } from "./WallpaperEditor.api";
+import { t } from "./i18n";
 
 const CANVAS_H = 192;
 
@@ -206,30 +208,30 @@ function ConfigFieldRow({
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
-const STATUS_VARIANTS: Record<SaveStatus, { label: string; className: string; }> = {
-  idle: { label: "No changes", className: "bg-muted text-muted-foreground" },
+const STATUS_VARIANTS: Record<SaveStatus, { labelKey: string; className: string; }> = {
+  idle: { labelKey: "status.idle", className: "bg-muted text-muted-foreground" },
   unsaved: {
-    label: "Unsaved changes",
+    labelKey: "status.unsaved",
     className: "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
   },
   saving: {
-    label: "Saving…",
+    labelKey: "status.saving",
     className: "animate-pulse bg-muted text-muted-foreground",
   },
   saved: {
-    label: "Saved",
+    labelKey: "status.saved",
     className: "bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300",
   },
   error: {
-    label: "Save failed",
+    labelKey: "status.error",
     className: "bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300",
   },
 };
 
 function StatusBadge({ status }: { status: SaveStatus; }) {
-  const { label, className } = STATUS_VARIANTS[status];
+  const { labelKey, className } = STATUS_VARIANTS[status];
   return (
-    <span className={cn("rounded px-2 py-0.5 text-xs font-medium", className)}>{label}</span>
+    <span className={cn("rounded px-2 py-0.5 text-xs font-medium", className)}>{t(labelKey)}</span>
   );
 }
 
@@ -240,8 +242,14 @@ export function WallpaperEditor() {
   const [monitorList, setMonitorList] = useState<MonitorInfo[]>([]);
   const [wallpaperMap, setWallpaperMap] = useState<Map<string, WallpaperManifest>>(new Map());
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<"general" | "monitor">("monitor");
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [loading, setLoading] = useState(true);
+
+  const selectMonitor = (id: string) => {
+    setSelectedId(id);
+    setView("monitor");
+  };
 
   useEffect(() => {
     Promise.all([readConfig(), listMonitors(), wallpapers()])
@@ -301,7 +309,7 @@ export function WallpaperEditor() {
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <span className="text-sm text-muted-foreground">Loading…</span>
+        <span className="text-sm text-muted-foreground">{t("editor.loading")}</span>
       </div>
     );
   }
@@ -325,17 +333,19 @@ export function WallpaperEditor() {
 
   const NONE = "__none__";
 
+  const isMonitorView = view === "monitor";
+
   return (
     <div className="flex h-full flex-row bg-background text-foreground">
       {/* Left panel — full height, monitor layout + list */}
       <div className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-r p-4">
         <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-          Monitors
+          {t("editor.monitors")}
         </span>
         <MonitorCanvas
           monitors={monitorList}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
+          selectedId={isMonitorView ? selectedId : null}
+          onSelect={selectMonitor}
         />
 
         <div className="space-y-0.5">
@@ -348,10 +358,10 @@ export function WallpaperEditor() {
               <button
                 key={m.id}
                 type="button"
-                onClick={() => setSelectedId(m.id)}
+                onClick={() => selectMonitor(m.id)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
-                  selectedId === m.id
+                  isMonitorView && selectedId === m.id
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 )}
@@ -370,10 +380,10 @@ export function WallpaperEditor() {
             return (
               <button
                 type="button"
-                onClick={() => setSelectedId(DEFAULT_KEY)}
+                onClick={() => selectMonitor(DEFAULT_KEY)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
-                  selectedId === DEFAULT_KEY
+                  isMonitorView && selectedId === DEFAULT_KEY
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 )}
@@ -384,6 +394,22 @@ export function WallpaperEditor() {
             );
           })()}
         </div>
+
+        <div className="flex-1" />
+
+        <button
+          type="button"
+          onClick={() => setView("general")}
+          className={cn(
+            "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+            view === "general"
+              ? "bg-accent text-accent-foreground"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          )}
+        >
+          <Settings className="h-4 w-4 shrink-0" />
+          <span className="text-xs font-semibold uppercase tracking-widest">{t("editor.generalSettings")}</span>
+        </button>
       </div>
 
       {/* Right column */}
@@ -393,20 +419,83 @@ export function WallpaperEditor() {
           <div className="flex-1" />
           <StatusBadge status={status} />
           <Button size="sm" disabled={status !== "unsaved"} onClick={handleSave}>
-            Save
+            {t("editor.save")}
           </Button>
         </div>
 
         {/* Config editor */}
         <div className="flex flex-1 flex-col overflow-y-auto p-5">
-          {!selectedId ? (
-            <p className="text-sm text-muted-foreground">Select a monitor to configure.</p>
+          {view === "general" ? (
+            <div className="max-w-lg space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="cfg-wallpapers-dir" className="text-sm font-medium leading-none">
+                  {t("general.wallpapersDir.label")}
+                </Label>
+                <p className="text-xs leading-snug text-muted-foreground">
+                  {t("general.wallpapersDir.desc")}
+                </p>
+                <Input
+                  id="cfg-wallpapers-dir"
+                  className="h-8 font-mono text-sm"
+                  value={config?.wallpapers_directory ?? ""}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setConfig(prev =>
+                      prev
+                        ? { ...prev, wallpapers_directory: v !== "" ? v : undefined }
+                        : prev
+                    );
+                    setStatus("unsaved");
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium leading-none">
+                  {t("general.configFile.label")}
+                </Label>
+                <p className="text-xs leading-snug text-muted-foreground">
+                  {t("general.configFile.desc")}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    openConfigFile().catch(err =>
+                      console.error("failed to open config file", err)
+                    );
+                  }}
+                >
+                  {t("general.configFile.button")}
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium leading-none">
+                  {t("general.wallpapersFolder.label")}
+                </Label>
+                <p className="text-xs leading-snug text-muted-foreground">
+                  {t("general.wallpapersFolder.desc")}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    openWallpapersDir().catch(err =>
+                      console.error("failed to open wallpapers dir", err)
+                    );
+                  }}
+                >
+                  {t("general.wallpapersFolder.button")}
+                </Button>
+              </div>
+            </div>
+          ) : !selectedId ? (
+            <p className="text-sm text-muted-foreground">{t("editor.selectMonitor")}</p>
           ) : (
             <div className="max-w-lg space-y-6">
               {/* Wallpaper selector */}
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                  Wallpaper
+                  {t("editor.wallpaper")}
                 </Label>
                 <Select
                   value={selMonitor?.wallpaper ?? NONE}
@@ -419,7 +508,7 @@ export function WallpaperEditor() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NONE}>
-                      <span className="italic text-muted-foreground">None</span>
+                      <span className="italic text-muted-foreground">{t("editor.none")}</span>
                     </SelectItem>
                     {Array.from(wallpaperMap.entries()).map(([id, wp]) => (
                       <SelectItem key={id} value={id}>
@@ -434,7 +523,7 @@ export function WallpaperEditor() {
               {selManifest && (
                 <div className="space-y-4">
                   {grouped.size === 0 ? (
-                    <p className="text-sm text-muted-foreground">No configurable fields.</p>
+                    <p className="text-sm text-muted-foreground">{t("editor.noFields")}</p>
                   ) : (
                     Array.from(grouped.entries()).map(([group, fields]) => (
                       <div key={group} className="space-y-3">
