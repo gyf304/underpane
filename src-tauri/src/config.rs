@@ -76,10 +76,20 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Scalar {
+    String(String),
+    Number(f64),
+    Bool(bool),
+}
+
+pub type WallpaperConfig = BTreeMap<String, Scalar>;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MonitorConfig {
     pub wallpaper: String,
-    #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
-    pub config: toml::Table,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub config: WallpaperConfig,
 }
 
 impl Default for Config {
@@ -154,11 +164,9 @@ impl Config {
     /// Subdirectories that are missing a manifest or have an unparseable one are silently skipped.
     pub fn wallpapers(&self) -> Result<BTreeMap<String, WallpaperManifest>, ConfigError> {
         let dir = self.get_wallpapers_dir()?;
-        println!("wallpapers dir {dir:?}");
         let mut map = BTreeMap::new();
 
         for entry in fs::read_dir(&dir)? {
-            println!("entry {entry:?}");
             let entry = entry?;
             if !entry.file_type()?.is_dir() {
                 continue;
@@ -172,8 +180,6 @@ impl Config {
                 Err(_) => continue,
             }
         }
-
-        println!("wallpapers {map:?}");
 
         Ok(map)
     }

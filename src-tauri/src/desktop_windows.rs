@@ -298,7 +298,7 @@ fn logical_monitor_rect(index: usize) -> Option<LogicalRect<f64, f64>> {
     })
 }
 
-fn calc_visibility(index: usize) -> Option<(f64, bool)> {
+pub(crate) fn calc_visibility(index: usize) -> Option<(f64, bool)> {
     let Some(rect) = logical_monitor_rect(index) else {
         return None;
     };
@@ -334,16 +334,6 @@ impl DesktopWindow {
             .clone();
         let monitor_clone = monitor.clone();
 
-        let mut init_lines: Vec<String> = vec![];
-        if let Ok(config) = serde_json::to_string(&monitor_config.config) {
-            init_lines.push(format!("config = {config};"));
-        }
-        if let Some((cov, focused)) = calc_visibility(index) {
-            init_lines.push(format!("coverage = {cov};"));
-            init_lines.push(format!("focused = {focused};"));
-        }
-        let init_str = init_lines.join(";\n");
-
         let window = Arc::new(
             tauri::WebviewWindowBuilder::new(
                 app,
@@ -359,9 +349,8 @@ impl DesktopWindow {
             // .hidden_title(true)
             .shadow(false)
             .initialization_script(&format!(
-                "(function () {{
+                "(async function () {{
                 {RUNTIME_JS};
-                {init_str};
             }})();"
             ))
             .build()?,
@@ -416,6 +405,9 @@ impl DesktopWindow {
         let mut tracked_coverage = Tracker::new(0.0);
         let mut tracked_focused = Tracker::new(false);
         let mut tracked_cursor_position = Tracker::new((0.0, 0.0));
+        let mut tracked_wallpaper = Tracker::new(
+            self.monitor_config().map(|c| c.wallpaper).unwrap_or_default(),
+        );
 
         loop {
             tokio::select! {
@@ -423,6 +415,9 @@ impl DesktopWindow {
                     let Some(monitor_config) = self.monitor_config() else {
                         continue
                     };
+                    if tracked_wallpaper.update(monitor_config.wallpaper.clone()) {
+                        let _ = self.window.navigate(wallpaper_url(tracked_wallpaper.get()));
+                    }
                     let _ = self.emit(
                         "config-change",
                         serde_json::json!({ "config": monitor_config.config }),

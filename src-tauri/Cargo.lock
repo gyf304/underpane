@@ -24,6 +24,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "directories",
+ "indexmap 2.14.0",
  "mime_guess",
  "notify",
  "objc2 0.6.4",

@@ -75,6 +75,7 @@ class MouseSimulator {
 const mouse = new MouseSimulator();
 
 const webviewWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+const invoke = window.__TAURI__.core.invoke;
 
 webviewWindow.listen("cursor-position", function (event) {
 	mouse.move(event.payload.x, event.payload.y);
@@ -84,6 +85,19 @@ let focused = false;
 let coverage = 0.0;
 let coverageThreshold = 0.8;
 let config = {};
+
+try {
+	const [visibility, initialConfig] = await Promise.all([
+		invoke("get_visibility"),
+		invoke("get_config"),
+	]);
+	coverage = visibility.coverage;
+	focused = visibility.focused;
+	config = initialConfig;
+	setHashTransient(encodeConfigHash(config));
+} catch (e) {
+	console.error("activedesk: failed to load initial state", e);
+}
 
 function covered(coverage) {
 	return coverage >= coverageThreshold;
@@ -138,8 +152,27 @@ webviewWindow.listen("desktop-coverage", (event) => {
 	}
 });
 
+function encodeConfigHash(cfg) {
+	const params = new URLSearchParams();
+	for (const [k, v] of Object.entries(cfg)) {
+		params.set(k, String(v));
+	}
+	return params.toString();
+}
+
+function setHashTransient(hash) {
+	const url = new URL(window.location.href);
+	const oldURL = window.location.href;
+	url.hash = hash;
+	const newURL = url.toString();
+	if (oldURL === newURL) return;
+	history.replaceState(history.state, "", newURL);
+	window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL, newURL }));
+}
+
 webviewWindow.listen("config-change", (event) => {
 	config = event.payload.config;
+	setHashTransient(encodeConfigHash(config));
 	activeDesk.dispatchEvent(
 		new CustomEvent("configchange", { detail: { config } })
 	);

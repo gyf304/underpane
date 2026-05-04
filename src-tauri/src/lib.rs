@@ -54,6 +54,8 @@ pub fn run() {
             handlers::write_system_config,
             handlers::list_monitors,
             handlers::list_wallpapers,
+            handlers::get_visibility,
+            handlers::get_config,
         ])
         .register_asynchronous_uri_scheme_protocol(
             "activedesk-wallpaper",
@@ -78,6 +80,13 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            let open_wallpapers_folder = MenuItem::with_id(
+                app,
+                "open_wallpapers_folder",
+                "Open Wallpapers Folder",
+                true,
+                None::<&str>,
+            )?;
             let refresh_wallpapers = MenuItem::with_id(
                 app,
                 "refresh_wallpapers",
@@ -86,7 +95,7 @@ pub fn run() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&configure, &open_config_folder, &refresh_wallpapers, &quit])?;
+            let menu = Menu::with_items(app, &[&configure, &open_config_folder, &open_wallpapers_folder, &refresh_wallpapers, &quit])?;
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -122,6 +131,21 @@ pub fn run() {
                                 app.opener().open_path(dir.to_string_lossy(), None::<&str>)
                             {
                                 eprintln!("activedesk: failed to open config folder: {e}");
+                            }
+                        }
+                    }
+                    "open_wallpapers_folder" => {
+                        use tauri_plugin_opener::OpenerExt;
+                        match CONFIG.borrow().get_wallpapers_dir() {
+                            Ok(dir) => {
+                                if let Err(e) =
+                                    app.opener().open_path(dir.to_string_lossy(), None::<&str>)
+                                {
+                                    eprintln!("activedesk: failed to open wallpaper folder: {e}");
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("activedesk: failed to resolve wallpaper folder: {e}");
                             }
                         }
                     }

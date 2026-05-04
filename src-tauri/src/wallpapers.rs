@@ -1,5 +1,6 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, io, path::PathBuf};
+use std::{io, path::PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -39,7 +40,8 @@ pub enum WallpaperConfigSchema {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WallpaperManifest {
     pub name: String,
-    pub config: HashMap<String, WallpaperConfigSchema>,
+    #[serde(default)]
+    pub config: IndexMap<String, WallpaperConfigSchema>,
 }
 
 impl WallpaperManifest {
