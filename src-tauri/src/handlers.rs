@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use tauri::{AppHandle, Window};
 use tauri_plugin_opener::OpenerExt;
-use crate::config::{config_path, CONFIG, Config, WallpaperConfig};
+use crate::config::{CONFIG_PATH, CONFIG, Config, WallpaperConfig};
 use crate::desktop_windows::calc_visibility;
 use crate::monitor_info::{current_monitors, MonitorInfo};
 use crate::wallpapers::WallpaperManifest;
@@ -42,16 +42,16 @@ pub fn write_system_config(window: Window, data: Config) -> Result<(), String> {
 #[tauri::command]
 pub fn open_config_file(app: AppHandle, window: Window) -> Result<(), String> {
     require_config_window(&window)?;
-    let path = config_path().ok_or_else(|| "no config dir".to_string())?;
     app.opener()
-        .open_path(path.to_string_lossy(), None::<&str>)
+        .open_path(CONFIG_PATH.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn open_wallpapers_dir(app: AppHandle, window: Window) -> Result<(), String> {
     require_config_window(&window)?;
-    let dir = CONFIG.borrow().get_wallpapers_dir().map_err(|e| e.to_string())?;
+    let dirs = CONFIG.borrow().get_wallpaper_dirs();
+    let dir = dirs.first().ok_or_else(|| "no wallpapers directory".to_string())?;
     app.opener()
         .open_path(dir.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())

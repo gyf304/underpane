@@ -51,11 +51,17 @@ impl WallpaperManifest {
     /// Load the manifest for the wallpaper named `name`, resolved against the
     /// configured wallpapers directory.
     pub fn get(name: &str) -> Result<Self, io::Error> {
-        let dir = CONFIG
-            .borrow()
-            .get_wallpapers_dir()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-        Self::load(dir.join(name))
+        let dirs = CONFIG.borrow().get_wallpaper_dirs();
+        for base in dirs {
+            let dir = base.join(name);
+            if dir.exists() {
+                return Self::load(dir);
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("wallpaper '{name}' not found"),
+        ))
     }
 
     /// Load the manifest for a wallpaper directory, preferring locale-specific

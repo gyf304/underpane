@@ -4,7 +4,6 @@ export interface MonitorConfig {
 }
 
 export interface SystemConfig {
-  wallpapers_directory?: string;
   monitors?: Record<string, MonitorConfig>;
 }
 

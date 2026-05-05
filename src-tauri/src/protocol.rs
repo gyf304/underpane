@@ -2,16 +2,6 @@ use crate::config::CONFIG;
 
 const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
 
-// pub fn handler(
-//     ctx: tauri::UriSchemeContext<'_, tauri::Wry>,
-//     request: tauri::http::Request<Vec<u8>>,
-//     responder: tauri::UriSchemeResponder,
-// ) {
-//     tauri::async_runtime::spawn(async move {
-//         responder.respond(handle(ctx, request, responder).await);
-//     });
-// }
-
 fn not_found() -> tauri::http::Response<Vec<u8>> {
     tauri::http::Response::builder()
         .status(404)
@@ -30,16 +20,6 @@ pub async fn handle(
         path = "index.html".to_string();
     }
 
-    let full_path = CONFIG
-        .borrow()
-        .get_wallpapers_dir()
-        .unwrap_or_else(|e| {
-            eprintln!("activedesk: could not resolve wallpapers dir: {e}");
-            std::path::PathBuf::from("wallpapers")
-        })
-        .join(wallpaper)
-        .join(&path);
-
     match *request.method() {
         tauri::http::Method::GET | tauri::http::Method::HEAD => {}
         _ => {
@@ -51,9 +31,17 @@ pub async fn handle(
         }
     }
 
-    let metadata = match tokio::fs::metadata(&full_path).await {
-        Ok(m) => m,
-        Err(_) => return not_found(),
+    let dirs = CONFIG.borrow().get_wallpaper_dirs();
+    let mut resolved: Option<(std::path::PathBuf, std::fs::Metadata)> = None;
+    for base in &dirs {
+        let candidate = base.join(wallpaper).join(&path);
+        if let Ok(m) = tokio::fs::metadata(&candidate).await {
+            resolved = Some((candidate, m));
+            break;
+        }
+    }
+    let Some((full_path, metadata)) = resolved else {
+        return not_found();
     };
     let file_size = metadata.len();
     let mime = mime_guess::from_path(&full_path).first_or_octet_stream();

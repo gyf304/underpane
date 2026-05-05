@@ -3,6 +3,7 @@ use std::sync::{ LazyLock, OnceLock };
 
 use crate::wallpapers::WallpaperManifest;
 
+use tauri::{AppHandle, Manager};
 use tokio::sync::watch;
 
 use directories::ProjectDirs;
@@ -11,22 +12,31 @@ use serde::{Deserialize, Serialize};
 
 static WATCHER: OnceLock<notify::RecommendedWatcher> = OnceLock::new();
 
+pub static RESOURCES_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn init(app: &AppHandle) {
+    if let Ok(dir) = app.path().resource_dir() {
+        let _ = RESOURCES_DIR.set(dir);
+    }
+}
+
+pub static CONFIG_FILENAME: &str = "config.toml";
+
+pub static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
+    ProjectDirs::from("com", "yifangu", "activedesk").expect("cannot get config dir")
+});
+
+pub static CONFIG_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
+    let config_dir = PROJECT_DIRS.config_dir();
+    fs::create_dir_all(&config_dir).expect("cannot create config dir");
+    config_dir.join("config.toml")
+});
+
 pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
     let initial = Config::load().unwrap();
     let (tx, rx) = watch::channel(initial);
 
-    let cfg_path = config_path().ok_or(ConfigError::NoConfigDir).unwrap();
-    let watch_dir = cfg_path
-        .parent()
-        .ok_or_else(|| {
-            ConfigError::Io(io::Error::new(
-                io::ErrorKind::NotFound,
-                "config path has no parent directory",
-            ))
-        }).unwrap()
-        .to_owned();
-
-    let cfg_filename = cfg_path.file_name().map(|n| n.to_owned());
+    let watch_dir = PROJECT_DIRS.config_dir();
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
@@ -35,7 +45,7 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
         let involves_config = event
             .paths
             .iter()
-            .any(|p| p.file_name() == cfg_filename.as_deref());
+            .any(|p| p.file_name().map(|s| s.to_str() == Some(CONFIG_FILENAME)).unwrap_or_default());
         if !involves_config {
             return;
         }
@@ -59,7 +69,7 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
         }
     }).unwrap();
 
-    watcher.watch(&watch_dir, RecursiveMode::NonRecursive).unwrap();
+    watcher.watch(watch_dir, RecursiveMode::NonRecursive).unwrap();
 
     WATCHER.set(watcher).unwrap();
 
@@ -69,8 +79,8 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub wallpapers_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wallpapers_directories: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub monitors: BTreeMap<String, MonitorConfig>,
 }
@@ -95,28 +105,27 @@ pub struct MonitorConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            wallpapers_directory: None,
+            wallpapers_directories: Vec::new(),
             monitors: BTreeMap::new(),
         }
     }
 }
 
-/// Returns `~/Library/Application Support/.../config.toml` on macOS.
-pub fn config_path() -> Option<PathBuf> {
-    ProjectDirs::from("com", "yifangu", "activedesk").map(|d| d.config_dir().join("config.toml"))
+fn expand_tilde(raw: &str) -> PathBuf {
+    if let Some(rest) = raw.strip_prefix("~/") {
+        directories::BaseDirs::new()
+            .map(|b| b.home_dir().join(rest))
+            .unwrap_or_else(|| PathBuf::from(raw))
+    } else {
+        PathBuf::from(raw)
+    }
 }
 
 impl Config {
     /// Load config from disk, creating a default file if none exists.
     /// Any other I/O or parse error is returned as `Err`.
     pub fn load() -> Result<Self, ConfigError> {
-        let path = config_path().ok_or(ConfigError::NoConfigDir)?;
-
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-
-        match fs::read_to_string(&path) {
+        match fs::read_to_string(CONFIG_PATH.clone()) {
             Ok(text) => Ok(toml::from_str(&text)?),
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 let config = Self::default();
@@ -127,31 +136,21 @@ impl Config {
         }
     }
 
-    /// Returns the wallpapers directory to use, creating it if it doesn't exist.
-    ///
-    /// Resolution order:
-    /// 1. `wallpapers_directory` field in `config.toml` (supports leading `~`)
-    /// 2. `~/Library/Application Support/.../wallpapers` (macOS default)
-    /// 3. `./wallpapers` relative to the working directory (last-resort fallback)
-    pub fn get_wallpapers_dir(&self) -> Result<PathBuf, ConfigError> {
-        let path = if let Some(raw) = &self.wallpapers_directory {
-            // Expand a leading `~` to the home directory.
-            if let Some(rest) = raw.strip_prefix("~/") {
-                directories::BaseDirs::new()
-                    .map(|b| b.home_dir().join(rest))
-                    .unwrap_or_else(|| PathBuf::from(raw))
-            } else {
-                PathBuf::from(raw)
-            }
-        } else {
-            // Default: <data_dir>/wallpapers_directory  →  ~/Library/Application Support/activedesk/wallpapers
-            ProjectDirs::from("com", "yifangu", "activedesk")
-                .map(|d| d.data_dir().join("wallpapers"))
-                .unwrap_or_else(|| PathBuf::from("wallpapers"))
-        };
+    pub fn get_wallpaper_dirs(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = self
+            .wallpapers_directories
+            .iter()
+            .map(|raw| expand_tilde(raw))
+            .collect();
 
-        fs::create_dir_all(&path)?;
-        Ok(path)
+        let user_dir = PROJECT_DIRS.data_dir().join("wallpapers");
+        let _ = fs::create_dir_all(&user_dir);
+        out.push(user_dir);
+
+        if let Some(res) = RESOURCES_DIR.get() {
+            out.push(res.join("wallpapers"));
+        }
+        out
     }
 
     pub fn get_monitor_config(&self, index: usize) -> Option<&MonitorConfig> {
@@ -163,20 +162,25 @@ impl Config {
     /// Returns a map from wallpaper directory name to its manifest.
     /// Subdirectories that are missing a manifest or have an unparseable one are silently skipped.
     pub fn wallpapers(&self) -> Result<BTreeMap<String, WallpaperManifest>, ConfigError> {
-        let dir = self.get_wallpapers_dir()?;
         let mut map = BTreeMap::new();
 
-        for entry in fs::read_dir(&dir)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            match WallpaperManifest::load(entry.path()) {
-                Ok(manifest) => {
-                    let name = entry.file_name().to_string_lossy().into_owned();
+        for dir in self.get_wallpaper_dirs() {
+            let read = match fs::read_dir(&dir) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            for entry in read.flatten() {
+                let Ok(ft) = entry.file_type() else { continue };
+                if !ft.is_dir() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if map.contains_key(&name) {
+                    continue;
+                }
+                if let Ok(manifest) = WallpaperManifest::load(entry.path()) {
                     map.insert(name, manifest);
                 }
-                Err(_) => continue,
             }
         }
 
@@ -185,22 +189,14 @@ impl Config {
 
     /// Persist config to disk, creating parent directories as needed.
     pub fn save(&self) -> Result<(), ConfigError> {
-        let path = config_path().ok_or(ConfigError::NoConfigDir)?;
-
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-
         let text = toml::to_string_pretty(self)?;
-        fs::write(&path, text)?;
+        fs::write(CONFIG_PATH.clone(), text)?;
         Ok(())
     }
 }
 
 #[derive(Debug)]
 pub enum ConfigError {
-    /// Could not determine the platform config directory.
-    NoConfigDir,
     Io(io::Error),
     Deserialize(toml::de::Error),
     Serialize(toml::ser::Error),
@@ -210,7 +206,6 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NoConfigDir => write!(f, "could not resolve config directory"),
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Deserialize(e) => write!(f, "TOML parse error: {e}"),
             Self::Serialize(e) => write!(f, "TOML serialize error: {e}"),

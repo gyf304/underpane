@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synthwave Canyon</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+if (!gl) { document.body.innerHTML = '<p style="color:white;padding:2rem">WebGL not supported</p>'; }
+
+// Shared fullscreen quad vertex shader. Passes a UV to the fragment shader.
+const VS = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main() {
+  v_uv = a_pos * 0.5 + 0.5;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+`;
+
+// Scene shader - renders the synthwave canyon at half resolution.
+const FS_SCENE = `
+precision highp float;
+uniform vec2  iResolution;
+uniform float iTime;
+
+#define PI 3.141592654
+
+const vec4 hsv2rgb_K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+vec3 hsv2rgb(vec3 c) {
+  vec3 p = abs(fract(c.xxx + hsv2rgb_K.xyz)*6.0 - hsv2rgb_K.www);
+  return c.z * mix(hsv2rgb_K.xxx, clamp(p - hsv2rgb_K.xxx, 0.0, 1.0), c.y);
+}
+
+vec4 alphaBlend(vec4 back, vec4 front) {
+  float w = front.w + back.w*(1.0-front.w);
+  vec3 xyz = (front.xyz*front.w + back.xyz*back.w*(1.0-front.w))/w;
+  return w > 0.0 ? vec4(xyz, w) : vec4(0.0);
+}
+vec3 alphaBlend3(vec3 back, vec4 front) {
+  return mix(back, front.xyz, front.w);
+}
+
+float mod1(inout float p, float size) {
+  float halfsize = size*0.5;
+  float c = floor((p + halfsize)/size);
+  p = mod(p + halfsize, size) - halfsize;
+  return c;
+}
+
+float planex(vec2 p, float w) { return abs(p.y) - w; }
+float circle(vec2 p, float r) { return length(p) - r; }
+
+float pmin(float a, float b, float k) {
+  float h = clamp(0.5+0.5*(b-a)/k, 0.0, 1.0);
+  return mix(b, a, h) - k*h*(1.0-h);
+}
+float pmax(float a, float b, float k) { return -pmin(-a, -b, k); }
+
+float tanh_approx(float x) {
+  float x2 = x*x;
+  return clamp(x*(27.0+x2)/(27.0+9.0*x2), -1.0, 1.0);
+}
+
+float hash(float co) { return fract(sin(co*12.9898)*13758.5453); }
+float hash(vec2 p) {
+  float a = dot(p, vec2(127.1, 311.7));
+  return fract(sin(a)*43758.5453123);
+}
+
+vec3 postProcess(vec3 col, vec2 q) {
+  col = clamp(col, 0.0, 1.0);
+  col = pow(col, vec3(1.0/2.2));
+  col = col*0.6 + 0.4*col*col*(3.0-2.0*col);
+  col = mix(col, vec3(dot(col, vec3(0.33))), -0.4);
+  col *= 0.5 + 0.5*pow(19.0*q.x*q.y*(1.0-q.x)*(1.0-q.y), 0.7);
+  return col;
+}
+
+float vnoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f*f*(3.0-2.0*f);
+  float a = hash(i + vec2(0.0,0.0));
+  float b = hash(i + vec2(1.0,0.0));
+  float c = hash(i + vec2(0.0,1.0));
+  float d = hash(i + vec2(1.0,1.0));
+  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+
+float fbm(vec2 p) {
+  const float aa = 0.35;
+  const float pp = 1.8;
+  float sum = 0.0;
+  float a = 1.0;
+  for (int i = 0; i < 3; ++i) {
+    sum += a*vnoise(p);
+    a *= aa;
+    p *= pp;
+  }
+  return sum;
+}
+
+float height(vec2 p) {
+  return fbm(p)*smoothstep(0.0, 1.25+0.25*sin(0.5*p.y), abs(p.x)) - 0.35;
+}
+
+vec3 offset(float z) {
+  float a = z;
+  vec2 p = -0.05*(vec2(cos(a), sin(a*sqrt(2.0))) + vec2(cos(a*sqrt(0.75)), sin(a*sqrt(0.5))));
+  return vec3(p, z);
+}
+vec3 doffset(float z) {
+  float eps = 0.1;
+  return 0.5*(offset(z+eps) - offset(z-eps))/eps;
+}
+vec3 ddoffset(float z) {
+  float eps = 0.1;
+  return 0.5*(doffset(z+eps) - doffset(z-eps))/eps;
+}
+
+vec4 plane(vec3 ro, vec3 rd, vec3 pp, vec3 off, float aa, float n) {
+  float h = hash(n);
+  vec2 p = (pp - off*2.0*vec3(1.0,1.0,0.0)).xy;
+  float he = height(vec2(p.x, pp.z));
+  float d = p.y - he;
+  float t = smoothstep(aa, -aa, d);
+  vec3 hsv = vec3(fract(0.7+0.125*sin(0.6*pp.z)), 0.5, smoothstep(aa, -aa, abs(d)-aa));
+  float g = exp(-90.0*max(abs(d), 0.0));
+  hsv.z += g;
+  hsv.z += (he*he - pp.y - 0.125)*0.5;
+  vec3 col = hsv2rgb(hsv);
+  return vec4(col, tanh_approx(t+g));
+}
+
+float sun(vec2 p) {
+  const float ch = 0.0125;
+  vec2 sp = p;
+  vec2 cp = p;
+  mod1(cp.y, ch*6.0);
+  float d0 = circle(sp, 0.5);
+  float d1 = planex(cp, ch);
+  float d2 = p.y + ch*3.0;
+  float d = d0;
+  d = pmax(d, -max(d1, d2), ch*2.0);
+  return d;
+}
+
+float df(vec2 p) {
+  const float sc = 25.0;
+  return sun(p/sc)*sc;
+}
+
+vec3 skyColor(vec3 ro, vec3 rd) {
+  float aa = 2.0/iResolution.y;
+  vec2 p = rd.xy*2.0;
+  p.y -= 0.25;
+  vec3 sunCol = mix(vec3(1.0,1.0,0.0), vec3(1.0,0.0,1.0), clamp((0.85-p.y)*0.75, 0.0, 1.0));
+  vec3 glareCol = sqrt(sunCol);
+  float ss = smoothstep(-1.05, 0.0, p.y);
+  vec3 glow = mix(vec3(0.6,0.7,1.0), glareCol, ss);
+  float s = 15.0;
+  float d = df(p*s)/s;
+  float db = abs(d) - 0.0025;
+  vec3 col = vec3(1.0,0.0,1.0)*0.125;
+  col += 0.65*glow*exp(-2.5*d)*ss;
+  col = mix(col, sunCol*ss, smoothstep(-aa, aa, -d));
+  col = mix(col, glow*1.55, smoothstep(-aa, aa, -db));
+  return col;
+}
+
+vec3 color(vec3 ww, vec3 uu, vec3 vv, vec3 ro, vec2 p) {
+  vec2 np = p + 1.0/iResolution.xy;
+  float rdd = 2.0;
+  vec3 rd  = normalize(p.x*uu  + p.y*vv  + rdd*ww);
+  vec3 nrd = normalize(np.x*uu + np.y*vv + rdd*ww);
+
+  const float planeDist = 0.5;
+  const int furthest = 24;
+  const int fadeFrom = 22;
+  float nz = floor(ro.z / planeDist);
+
+  vec3 skyCol = skyColor(ro, rd);
+  vec4 acol = vec4(0.0);
+  const float cutOff = 0.95;
+
+  for (int i = 1; i <= 24; ++i) {
+    float pz = planeDist*nz + planeDist*float(i);
+    float pd = (pz - ro.z)/rd.z;
+    vec3 pp = ro + rd*pd;
+    if (pp.y < 1.25 && pd > 0.0 && acol.w < cutOff) {
+      vec3 npp = ro + nrd*pd;
+      float aa = 3.0*length(pp - npp);
+      vec3 off = offset(pp.z);
+      vec4 pcol = plane(ro, rd, pp, off, aa, nz+float(i));
+      float nzd = pp.z - ro.z;
+      float fadeIn  = smoothstep(planeDist*float(furthest), planeDist*float(fadeFrom), nzd);
+      float fadeOut = smoothstep(0.0, planeDist*0.1, nzd);
+      pcol.xyz = mix(skyCol, pcol.xyz, fadeIn);
+      pcol.w  *= fadeOut;
+      pcol = clamp(pcol, 0.0, 1.0);
+      acol = alphaBlend(pcol, acol);
+    } else {
+      acol.w = acol.w > cutOff ? 1.0 : acol.w;
+      break;
+    }
+  }
+  return alphaBlend3(skyCol, acol);
+}
+
+vec3 effect(vec2 p, vec2 q) {
+  float tm  = iTime*0.25;
+  vec3 ro   = offset(tm);
+  vec3 dro  = doffset(tm);
+  vec3 ddro = ddoffset(tm);
+  vec3 ww = normalize(dro);
+  vec3 uu = normalize(cross(normalize(vec3(0.0,1.0,0.0)+ddro), ww));
+  vec3 vv = normalize(cross(ww, uu));
+  return color(ww, uu, vv, ro, p);
+}
+
+void main() {
+  vec2 q = gl_FragCoord.xy / iResolution.xy;
+  vec2 p = -1.0 + 2.0*q;
+  p.x *= iResolution.x / iResolution.y;
+  vec3 col = effect(p, q);
+  col = postProcess(col, q);
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+// CAS upscale shader - runs at full resolution, reads from the half-res texture.
+//
+// AMD Contrast Adaptive Sharpening (simplified for WebGL 1.0):
+// Samples the 5-tap cross neighbourhood, computes a local luma min/max,
+// derives a sharpening weight that is strongest in low-contrast regions and
+// falls off where contrast is already high (preventing oversharpening on
+// bright neon edges). The centre pixel is then blended toward the sharpened
+// result. uSharpness=0 is maximum sharpening, uSharpness=1 is a no-op.
+const FS_CAS = `
+precision highp float;
+varying vec2 v_uv;
+uniform sampler2D uTex;
+uniform vec2  uTexelSize;  // 1.0 / half-res dimensions
+uniform float uSharpness;  // 0 = sharpest, 1 = off  (AMD convention)
+
+void main() {
+  // 5-tap cross: centre + N/S/E/W
+  vec3 a = texture2D(uTex, v_uv + uTexelSize * vec2( 0.0, -1.0)).rgb;
+  vec3 b = texture2D(uTex, v_uv + uTexelSize * vec2(-1.0,  0.0)).rgb;
+  vec3 c = texture2D(uTex, v_uv                                 ).rgb;
+  vec3 d = texture2D(uTex, v_uv + uTexelSize * vec2( 1.0,  0.0)).rgb;
+  vec3 e = texture2D(uTex, v_uv + uTexelSize * vec2( 0.0,  1.0)).rgb;
+
+  // Perceived luma for each tap
+  const vec3 lw = vec3(0.2126, 0.7152, 0.0722);
+  float la = dot(a, lw);
+  float lb = dot(b, lw);
+  float lc = dot(c, lw);
+  float ld = dot(d, lw);
+  float le = dot(e, lw);
+
+  // Local contrast range
+  float mnL = min(min(min(la, lb), min(lc, ld)), le);
+  float mxL = max(max(max(la, lb), max(lc, ld)), le);
+
+  // CAS weight: peaks where contrast is low, fades where it is high.
+  // sqrt maps the weight to a perceptually linear feel.
+  float w = sqrt(min(mnL, 1.0 - mxL) / (mxL + 1e-4));
+  // Sharpness control maps [0,1] -> [-0.125, -0.2] kernel weight
+  w *= mix(-0.125, -0.2, 1.0 - uSharpness);
+
+  // Unsharp-mask style blend: centre gets (1 - 4w), neighbours share 4w.
+  // When w is negative the neighbours pull the centre up (sharpening).
+  vec3 col = clamp(c*(1.0 - 4.0*w) + (a + b + d + e)*w, 0.0, 1.0);
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+// ---- GL helpers ----
+function compileShader(gl, type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+function buildProgram(gl, fsSrc) {
+  const vs = compileShader(gl, gl.VERTEX_SHADER, VS);
+  const fs = compileShader(gl, gl.FRAGMENT_SHADER, fsSrc);
+  const p = gl.createProgram();
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+    console.error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+// Shared quad buffer; must re-bind attrib pointer when switching programs.
+const quadBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+function bindQuad(prog) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  const loc = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+}
+
+// ---- programs ----
+const sceneProg = buildProgram(gl, FS_SCENE);
+const casProg   = buildProgram(gl, FS_CAS);
+
+// scene uniforms
+const uRes  = gl.getUniformLocation(sceneProg, 'iResolution');
+const uTime = gl.getUniformLocation(sceneProg, 'iTime');
+
+// CAS uniforms
+const uTex       = gl.getUniformLocation(casProg, 'uTex');
+const uTexelSize = gl.getUniformLocation(casProg, 'uTexelSize');
+const uSharpness = gl.getUniformLocation(casProg, 'uSharpness');
+
+// 0 = maximum sharpening, 1 = passthrough. 0.0 is a good default for 2x upscale.
+const SHARPNESS = 0.2;
+
+// ---- half-res FBO ----
+let halfW = 1, halfH = 1, fbo, fbTex;
+
+function createFBO(w, h) {
+  if (fbo) { gl.deleteFramebuffer(fbo); gl.deleteTexture(fbTex); }
+  fbTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, fbTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  // LINEAR is intentional: the CAS pass does its own neighbourhood sampling,
+  // but the GPU's linear filter still helps during the UV->texel mapping.
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fbTex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+function readHashFloat(key, fallback) {
+  const v = parseFloat(new URLSearchParams(location.hash.slice(1)).get(key));
+  return Number.isFinite(v) ? v : fallback;
+}
+function readHashBool(key, fallback) {
+  const v = new URLSearchParams(location.hash.slice(1)).get(key);
+  if (v === null) return fallback;
+  return v === 'true' || v === '1';
+}
+function readSpeed() { return readHashFloat('speed', 1.0); }
+function readScale() {
+  const s = readHashFloat('scale', 0.75);
+  return Math.min(1.0, Math.max(0.1, s));
+}
+function readFpsLimit() { return Math.max(1, readHashFloat('fps', 60)); }
+function readFpsLimitEnabled() { return readHashBool('fps_limit', false); }
+function readPauseWhenHidden() { return readHashBool('pause_when_hidden', true); }
+
+let speed = readSpeed();
+let scale = readScale();
+let fpsLimit = readFpsLimit();
+let fpsLimitEnabled = readFpsLimitEnabled();
+let pauseWhenHidden = readPauseWhenHidden();
+
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  halfW = Math.max(1, Math.floor(canvas.width  * scale));
+  halfH = Math.max(1, Math.floor(canvas.height * scale));
+  createFBO(halfW, halfH);
+}
+
+window.addEventListener('resize', resize);
+resize();
+
+window.addEventListener('hashchange', () => {
+  speed = readSpeed();
+  fpsLimit = readFpsLimit();
+  fpsLimitEnabled = readFpsLimitEnabled();
+  pauseWhenHidden = readPauseWhenHidden();
+  const newScale = readScale();
+  if (newScale !== scale) {
+    scale = newScale;
+    resize();
+  }
+});
+
+let simTime = 0;
+let lastReal = performance.now();
+let nextDraw = 0;
+
+function frame() {
+  const nowReal = performance.now();
+
+  if (pauseWhenHidden && document.visibilityState === 'hidden') {
+    lastReal = nowReal;
+    nextDraw = 0;
+    requestAnimationFrame(frame);
+    return;
+  }
+
+  const dt = (nowReal - lastReal) / 1000;
+  lastReal = nowReal;
+  simTime += dt * speed;
+
+  if (fpsLimitEnabled) {
+    const minInterval = 1000 / fpsLimit;
+    // Half-interval slack: rAF ticks land on the vsync grid, so a frame that
+    // arrives slightly *before* the deadline should still draw rather than
+    // get pushed to the next vsync (which causes the jitter).
+    if (nowReal + minInterval * 0.5 < nextDraw) {
+      requestAnimationFrame(frame);
+      return;
+    }
+    // Advance schedule by whole intervals; clamp if we fell far behind so we
+    // don't burst-render to catch up.
+    if (nextDraw === 0 || nowReal - nextDraw > minInterval * 2) {
+      nextDraw = nowReal + minInterval;
+    } else {
+      nextDraw += minInterval;
+    }
+  }
+  const t = simTime;
+
+  // Pass 1: render scene at half resolution into the FBO.
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.viewport(0, 0, halfW, halfH);
+  gl.useProgram(sceneProg);
+  bindQuad(sceneProg);
+  gl.uniform2f(uRes, halfW, halfH);
+  gl.uniform1f(uTime, t);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  // Pass 2: CAS upscale from half-res texture to full canvas.
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.useProgram(casProg);
+  bindQuad(casProg);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, fbTex);
+  gl.uniform1i(uTex, 0);
+  gl.uniform2f(uTexelSize, 1.0 / halfW, 1.0 / halfH);
+  gl.uniform1f(uSharpness, SHARPNESS);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

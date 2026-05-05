@@ -428,28 +428,6 @@ export function WallpaperEditor() {
           {view === "general" ? (
             <div className="max-w-lg space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="cfg-wallpapers-dir" className="text-sm font-medium leading-none">
-                  {t("general.wallpapersDir.label")}
-                </Label>
-                <p className="text-xs leading-snug text-muted-foreground">
-                  {t("general.wallpapersDir.desc")}
-                </p>
-                <Input
-                  id="cfg-wallpapers-dir"
-                  className="h-8 font-mono text-sm"
-                  value={config?.wallpapers_directory ?? ""}
-                  onChange={e => {
-                    const v = e.target.value;
-                    setConfig(prev =>
-                      prev
-                        ? { ...prev, wallpapers_directory: v !== "" ? v : undefined }
-                        : prev
-                    );
-                    setStatus("unsaved");
-                  }}
-                />
-              </div>
-              <div className="space-y-1.5">
                 <Label className="text-sm font-medium leading-none">
                   {t("general.configFile.label")}
                 </Label>

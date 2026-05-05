@@ -67,6 +67,7 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
+            config::init(&handle);
             monitor_info::init(&handle);
             locale::init(&handle);
             tray::init(&handle);
