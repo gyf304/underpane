@@ -142,7 +142,11 @@ function ConfigFieldRow({
             <p className="text-xs leading-snug text-muted-foreground">{field.description}</p>
           )}
         </div>
-        <Switch id={id} checked={Boolean(value)} onCheckedChange={onChange} />
+        <Switch
+          id={id}
+          checked={value != null ? Boolean(value) : Boolean(field.default)}
+          onCheckedChange={onChange}
+        />
       </div>
     );
   }
