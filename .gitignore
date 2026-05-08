@@ -23,3 +23,5 @@ dist-ui
 *.njsproj
 *.sln
 *.sw?
+
+.claude/*.local.*

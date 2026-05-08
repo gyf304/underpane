@@ -279,6 +279,15 @@ fn wallpaper_url(wallpaper: &str) -> url::Url {
     u
 }
 
+fn wallpaper_navigate_url(wallpaper: &str) -> url::Url {
+    #[cfg(windows)]
+    // wry's custom-protocol workaround for WebView2: maps custom-scheme://host → http://custom-scheme.host
+    return url::Url::parse(&format!("http://activedesk-wallpaper.{wallpaper}")).unwrap();
+
+    #[cfg(not(windows))]
+    return wallpaper_url(wallpaper);
+}
+
 fn logical_monitor_rect(index: usize) -> Option<LogicalRect<f64, f64>> {
     let monitors = MONITORS.borrow();
     let Some(monitor) = monitors.get(index) else {
@@ -423,7 +432,7 @@ impl DesktopWindow {
                         continue
                     };
                     if tracked_wallpaper.update(monitor_config.wallpaper.clone()) {
-                        let _ = self.window.navigate(wallpaper_url(tracked_wallpaper.get()));
+                        let _ = self.window.navigate(wallpaper_navigate_url(tracked_wallpaper.get()));
                     }
                     let _ = self.emit(
                         "config-change",
