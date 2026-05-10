@@ -22,6 +22,9 @@ const messages: Record<string, string> = {
   "general.wallpapersFolder.label": "壁纸文件夹",
   "general.wallpapersFolder.desc": "在文件浏览器中打开壁纸目录。",
   "general.wallpapersFolder.button": "打开壁纸文件夹",
+
+  "general.autostart.label": "登录时启动",
+  "general.autostart.desc": "登录时自动启动 ActiveDesk。",
 };
 
 export default messages;

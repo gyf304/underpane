@@ -25,3 +25,11 @@ export async function wallpapers(): Promise<Map<string, WallpaperManifest>> {
   const result = await invoke<Record<string, WallpaperManifest>>("list_wallpapers");
   return new Map(Object.entries(result));
 }
+
+export async function getAutostart(): Promise<boolean> {
+  return invoke("get_autostart");
+}
+
+export async function setAutostart(enabled: boolean): Promise<void> {
+  await invoke("set_autostart", { enabled });
+}

@@ -20,7 +20,7 @@ import {
   type WallpaperConfigSchema,
   type SaveStatus,
 } from "./WallpaperEditor.types";
-import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir } from "./WallpaperEditor.api";
+import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir, getAutostart, setAutostart } from "./WallpaperEditor.api";
 import { t } from "./i18n";
 
 const CANVAS_H = 192;
@@ -249,6 +249,7 @@ export function WallpaperEditor() {
   const [view, setView] = useState<"general" | "monitor">("monitor");
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [loading, setLoading] = useState(true);
+  const [autostart, setAutostartState] = useState<boolean | null>(null);
 
   const selectMonitor = (id: string) => {
     setSelectedId(id);
@@ -256,15 +257,22 @@ export function WallpaperEditor() {
   };
 
   useEffect(() => {
-    Promise.all([readConfig(), listMonitors(), wallpapers()])
-      .then(([cfg, monitors, wpMap]) => {
+    Promise.all([readConfig(), listMonitors(), wallpapers(), getAutostart()])
+      .then(([cfg, monitors, wpMap, autostartEnabled]) => {
         setConfig(cfg);
         setMonitorList(monitors);
         setWallpaperMap(wpMap);
         setSelectedId(monitors[0]?.id ?? null);
+        setAutostartState(autostartEnabled);
         setLoading(false);
       });
   }, []);
+
+  const handleAutostartChange = (enabled: boolean) => {
+    setAutostart(enabled)
+      .then(() => setAutostartState(enabled))
+      .catch(err => console.error("failed to set autostart", err));
+  };
 
   const handleWallpaperChange = (monitorId: string, wallpaperId: string | null) => {
     setConfig(prev => {
@@ -468,6 +476,21 @@ export function WallpaperEditor() {
                 >
                   {t("general.wallpapersFolder.button")}
                 </Button>
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-1 flex-col gap-1">
+                  <Label className="text-sm font-medium leading-none">
+                    {t("general.autostart.label")}
+                  </Label>
+                  <p className="text-xs leading-snug text-muted-foreground">
+                    {t("general.autostart.desc")}
+                  </p>
+                </div>
+                <Switch
+                  checked={autostart ?? false}
+                  onCheckedChange={handleAutostartChange}
+                  disabled={autostart === null}
+                />
               </div>
             </div>
           ) : !selectedId ? (

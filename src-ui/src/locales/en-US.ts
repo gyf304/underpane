@@ -22,6 +22,9 @@ const messages: Record<string, string> = {
   "general.wallpapersFolder.label": "Wallpapers folder",
   "general.wallpapersFolder.desc": "Open the wallpapers directory in your file browser.",
   "general.wallpapersFolder.button": "Open wallpapers folder",
+
+  "general.autostart.label": "Launch at login",
+  "general.autostart.desc": "Automatically start ActiveDesk when you log in.",
 };
 
 export default messages;

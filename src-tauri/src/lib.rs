@@ -44,6 +44,7 @@ pub fn sync_desktop_windows(app: &tauri::AppHandle) -> Result<(), tauri::Error> 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             handlers::read_system_config,
@@ -54,6 +55,8 @@ pub fn run() {
             handlers::list_wallpapers,
             handlers::get_visibility,
             handlers::get_config,
+            handlers::get_autostart,
+            handlers::set_autostart,
         ])
         .register_asynchronous_uri_scheme_protocol(
             "activedesk-wallpaper",

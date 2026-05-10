@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use serde::Serialize;
 use tauri::{AppHandle, Window};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 use crate::config::{CONFIG_PATH, CONFIG, Config, WallpaperConfig};
 use crate::desktop_windows::calc_visibility;
@@ -81,6 +82,22 @@ pub fn get_visibility(window: Window) -> Result<Visibility, String> {
     let (coverage, focused) =
         calc_visibility(index).ok_or_else(|| "no monitor at index".to_string())?;
     Ok(Visibility { coverage, focused })
+}
+
+#[tauri::command]
+pub fn get_autostart(app: AppHandle, window: Window) -> Result<bool, String> {
+    require_config_window(&window)?;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, window: Window, enabled: bool) -> Result<(), String> {
+    require_config_window(&window)?;
+    if enabled {
+        app.autolaunch().enable().map_err(|e| e.to_string())
+    } else {
+        app.autolaunch().disable().map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
