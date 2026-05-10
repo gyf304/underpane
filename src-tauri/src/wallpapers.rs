@@ -1,7 +1,10 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::{io, path::{Path, PathBuf}};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use crate::config::{Scalar, WallpaperConfig, CONFIG};
 
@@ -91,11 +94,15 @@ impl WallpaperManifest {
         let mut out = WallpaperConfig::new();
         for (key, schema) in &self.config {
             let value = match schema {
-                WallpaperConfigSchema::Bool { default: Some(v), .. } => Some(Scalar::Bool(*v)),
-                WallpaperConfigSchema::String { default: Some(v), .. } => {
-                    Some(Scalar::String(v.clone()))
-                }
-                WallpaperConfigSchema::Number { default: Some(v), .. } => Some(Scalar::Number(*v)),
+                WallpaperConfigSchema::Bool {
+                    default: Some(v), ..
+                } => Some(Scalar::Bool(*v)),
+                WallpaperConfigSchema::String {
+                    default: Some(v), ..
+                } => Some(Scalar::String(v.clone())),
+                WallpaperConfigSchema::Number {
+                    default: Some(v), ..
+                } => Some(Scalar::Number(*v)),
                 _ => None,
             };
             if let Some(v) = value {
@@ -130,6 +137,12 @@ mod tests {
         let manifest: WallpaperManifest = toml::from_str(toml).unwrap();
         assert_eq!(manifest.name, "My Wallpaper");
         let schema = manifest.config.get("show_clock").unwrap();
-        assert!(matches!(schema, WallpaperConfigSchema::Bool { default: Some(true), .. }));
+        assert!(matches!(
+            schema,
+            WallpaperConfigSchema::Bool {
+                default: Some(true),
+                ..
+            }
+        ));
     }
 }

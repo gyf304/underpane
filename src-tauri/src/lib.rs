@@ -1,3 +1,4 @@
+mod app;
 mod config;
 mod desktop_windows;
 mod handlers;
@@ -9,42 +10,44 @@ mod utils;
 mod wallpapers;
 mod window_info;
 
-use std::sync::{LazyLock, Mutex};
-
 pub use config::ConfigError;
 use config::CONFIG;
+use tauri::{AppHandle, Listener};
 
-use crate::desktop_windows::DesktopWindow;
+use crate::app::{APP_HANDLE, APP_HANDLE_LOCK};
+use crate::config::show_config_ui;
+use crate::desktop_windows::{DESKTOP_WINDOWS, sync_desktop_windows};
 use crate::monitor_info::MONITORS;
 
-static DESKTOP_WINDOWS: LazyLock<Mutex<Vec<Option<DesktopWindow>>>> =
-    LazyLock::new(|| Mutex::new(vec![]));
-
-pub fn sync_desktop_windows(app: &tauri::AppHandle) -> Result<(), tauri::Error> {
-    let mut windows = DESKTOP_WINDOWS.lock().unwrap();
-    let monitor_count = MONITORS.borrow().len();
-    let config = CONFIG.borrow().clone();
-
-    windows.resize(monitor_count, None);
-
-    for i in 0..monitor_count {
-        let monitor_config = config.get_monitor_config(i);
-        if monitor_config.is_some() {
-            if windows[i].is_none() {
-                windows[i] = Some(DesktopWindow::new(app, i)?);
-            }
-        } else {
-            windows[i] = None;
-        }
+async fn tauri_main(app: &AppHandle) {
+    let mut monitors_rx = MONITORS.clone();
+    let mut config_rx = CONFIG.clone();
+    tray::init();
+    let _ = sync_desktop_windows();
+    if DESKTOP_WINDOWS.lock().is_ok_and(|v| v.iter().all(|w| w.is_none())) {
+        show_config_ui(app);
     }
 
-    Ok(())
+    loop {
+        tokio::select! {
+            Ok(_) = monitors_rx.changed() => {
+                let _ = sync_desktop_windows();
+            }
+            Ok(_) = config_rx.changed() => {
+                let _ = sync_desktop_windows();
+            }
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             handlers::read_system_config,
@@ -68,32 +71,10 @@ pub fn run() {
             },
         )
         .setup(move |app| {
-            let handle = app.handle().clone();
+            APP_HANDLE_LOCK.set(app.handle().clone()).unwrap();
 
-            config::init(&handle);
-            monitor_info::init(&handle);
-            locale::init(&handle);
-            tray::init(&handle);
-
-            sync_desktop_windows(&handle)?;
-
-            tauri::async_runtime::spawn(async move {
-                let mut monitors_rx = MONITORS.clone();
-                let mut config_rx = CONFIG.clone();
-                loop {
-                    tokio::select! {
-                        Ok(_) = monitors_rx.changed() => {
-                            if let Err(e) = sync_desktop_windows(&handle) {
-                                eprintln!("Error syncing windows: {e}");
-                            }
-                        }
-                        Ok(_) = config_rx.changed() => {
-                            if let Err(e) = sync_desktop_windows(&handle) {
-                                eprintln!("Error syncing windows: {e}");
-                            }
-                        }
-                    }
-                }
+            app.once("init", |_| {
+                tauri::async_runtime::spawn(tauri_main(&APP_HANDLE));
             });
 
             Ok(())

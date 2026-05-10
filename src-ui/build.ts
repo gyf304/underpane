@@ -135,8 +135,7 @@ const result = await Bun.build({
   ...cliConfig,
 });
 
-await Bun.write((cliConfig.outdir ?? "dist") + "/blank.html", "<html></html>");
-
+await Bun.$`cp ./src/background.html ${(cliConfig.outdir ?? "dist") + "/background.html"} `
 const end = performance.now();
 
 const outputTable = result.outputs.map(output => ({

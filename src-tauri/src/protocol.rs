@@ -10,9 +10,7 @@ fn not_found() -> tauri::http::Response<Vec<u8>> {
         .unwrap()
 }
 
-pub async fn handle(
-    request: tauri::http::Request<Vec<u8>>,
-) -> tauri::http::Response<Vec<u8>> {
+pub async fn handle(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
     let uri = request.uri();
     let wallpaper = uri.host().unwrap();
     let mut path = uri.path().trim_matches('/').to_string();

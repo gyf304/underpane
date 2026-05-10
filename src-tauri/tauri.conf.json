@@ -15,7 +15,7 @@
       {
         "label": "background",
         "visible": false,
-        "url": "blank.html"
+        "url": "background.html"
       }
     ],
     "security": {

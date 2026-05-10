@@ -1,12 +1,12 @@
-use std::collections::BTreeMap;
+use crate::config::{Config, WallpaperConfig, CONFIG, CONFIG_PATH};
+use crate::desktop_windows::calc_desktop_visibility;
+use crate::monitor_info::{current_monitors, MonitorInfo};
+use crate::wallpapers::WallpaperManifest;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use tauri::{AppHandle, Window};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
-use crate::config::{CONFIG_PATH, CONFIG, Config, WallpaperConfig};
-use crate::desktop_windows::calc_visibility;
-use crate::monitor_info::{current_monitors, MonitorInfo};
-use crate::wallpapers::WallpaperManifest;
 
 fn require_config_window(window: &Window) -> Result<(), String> {
     if window.label() == "config" {
@@ -52,7 +52,9 @@ pub fn open_config_file(app: AppHandle, window: Window) -> Result<(), String> {
 pub fn open_wallpapers_dir(app: AppHandle, window: Window) -> Result<(), String> {
     require_config_window(&window)?;
     let dirs = CONFIG.borrow().get_wallpaper_dirs();
-    let dir = dirs.first().ok_or_else(|| "no wallpapers directory".to_string())?;
+    let dir = dirs
+        .first()
+        .ok_or_else(|| "no wallpapers directory".to_string())?;
     app.opener()
         .open_path(dir.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
@@ -80,7 +82,7 @@ pub struct Visibility {
 pub fn get_visibility(window: Window) -> Result<Visibility, String> {
     let index = monitor_index_from_label(&window)?;
     let (coverage, focused) =
-        calc_visibility(index).ok_or_else(|| "no monitor at index".to_string())?;
+        calc_desktop_visibility(index).ok_or_else(|| "no monitor at index".to_string())?;
     Ok(Visibility { coverage, focused })
 }
 

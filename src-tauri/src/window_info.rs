@@ -1,6 +1,6 @@
 use serde::Serialize;
-use tauri::{LogicalPosition, LogicalRect, LogicalSize};
 use std::sync::{LazyLock, OnceLock};
+use tauri::{LogicalPosition, LogicalRect, LogicalSize};
 use tokio::sync::watch;
 
 #[derive(Clone, Debug, Serialize)]
@@ -28,17 +28,19 @@ pub static WINDOWS: LazyLock<watch::Receiver<Vec<WindowInfo>>> = LazyLock::new(|
     let windows_clone = windows.clone();
     let (tx, rx) = watch::channel(windows);
 
-    HANDLE.get_or_init(|| tauri::async_runtime::spawn(async move {
-        let mut prev_windows = windows_clone;
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            let windows = get_all_windows();
-            if windows != prev_windows {
-                prev_windows = windows.clone();
-                let _ = tx.send(windows);
+    HANDLE.get_or_init(|| {
+        tauri::async_runtime::spawn(async move {
+            let mut prev_windows = windows_clone;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                let windows = get_all_windows();
+                if windows != prev_windows {
+                    prev_windows = windows.clone();
+                    let _ = tx.send(windows);
+                }
             }
-        }
-    }));
+        })
+    });
 
     rx
 });
@@ -80,7 +82,11 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
     impl CFOwned {
         /// Takes ownership of a CF object. Returns `None` if the pointer is null.
         unsafe fn new(ptr: CFTypeRef) -> Option<Self> {
-            if ptr.is_null() { None } else { Some(Self(ptr)) }
+            if ptr.is_null() {
+                None
+            } else {
+                Some(Self(ptr))
+            }
         }
 
         fn as_ptr(&self) -> CFTypeRef {
@@ -90,7 +96,9 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
 
     impl Drop for CFOwned {
         fn drop(&mut self) {
-            unsafe { CFRelease(self.0); }
+            unsafe {
+                CFRelease(self.0);
+            }
         }
     }
 
@@ -162,7 +170,8 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
             system_wide.as_ptr(),
             ax_focused_app.as_ptr(),
             &mut focused_app as *mut _ as *mut CFTypeRef,
-        ) != 0 {
+        ) != 0
+        {
             return None;
         }
         let focused_app = CFOwned::new(focused_app)?;
@@ -172,7 +181,8 @@ pub fn get_all_windows_macos() -> Vec<WindowInfo> {
             focused_app.as_ptr(),
             ax_focused_window.as_ptr(),
             &mut focused_window as *mut _ as *mut CFTypeRef,
-        ) != 0 {
+        ) != 0
+        {
             return None;
         }
         let focused_window = CFOwned::new(focused_window)?;
@@ -373,10 +383,7 @@ pub fn get_all_windows_windows() -> Vec<WindowInfo> {
 
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
-        let _ = EnumWindows(
-            Some(enum_proc),
-            LPARAM(&mut ctx as *mut _ as isize),
-        );
+        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut ctx as *mut _ as isize));
     }
 
     ctx.windows

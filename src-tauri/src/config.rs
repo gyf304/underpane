@@ -1,51 +1,40 @@
+use std::sync::{LazyLock, OnceLock};
 use std::{collections::BTreeMap, fs, io, path::PathBuf};
-use std::sync::{ LazyLock, OnceLock };
 
+use crate::app::APP_HANDLE;
 use crate::wallpapers::WallpaperManifest;
 
 use tauri::{AppHandle, Manager};
 use tokio::sync::watch;
 
-use directories::ProjectDirs;
 use notify::{EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
 static WATCHER: OnceLock<notify::RecommendedWatcher> = OnceLock::new();
 
-pub static RESOURCES_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-pub fn init(app: &AppHandle) {
-    if let Ok(dir) = app.path().resource_dir() {
-        let _ = RESOURCES_DIR.set(dir);
-    }
-}
-
 pub static CONFIG_FILENAME: &str = "config.toml";
 
-pub static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
-    ProjectDirs::from("com", "yifangu", "activedesk").expect("cannot get config dir")
-});
-
 pub static CONFIG_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
-    let config_dir = PROJECT_DIRS.config_dir();
+    let config_dir = APP_HANDLE.path().config_dir().unwrap();
     fs::create_dir_all(&config_dir).expect("cannot create config dir");
     config_dir.join("config.toml")
 });
 
 pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
-    let initial = Config::load().unwrap();
+    let initial = Config::load().unwrap_or_default();
     let (tx, rx) = watch::channel(initial);
 
-    let watch_dir = PROJECT_DIRS.config_dir();
+    let watch_dir = APP_HANDLE.path().config_dir().unwrap();
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
 
         // Filter to only events involving config.toml.
-        let involves_config = event
-            .paths
-            .iter()
-            .any(|p| p.file_name().map(|s| s.to_str() == Some(CONFIG_FILENAME)).unwrap_or_default());
+        let involves_config = event.paths.iter().any(|p| {
+            p.file_name()
+                .map(|s| s.to_str() == Some(CONFIG_FILENAME))
+                .unwrap_or_default()
+        });
         if !involves_config {
             return;
         }
@@ -67,9 +56,12 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
             }
             Err(e) => eprintln!("activedesk: config reload failed: {e}"),
         }
-    }).unwrap();
+    })
+    .unwrap();
 
-    watcher.watch(watch_dir, RecursiveMode::NonRecursive).unwrap();
+    watcher
+        .watch(&watch_dir, RecursiveMode::NonRecursive)
+        .unwrap();
 
     WATCHER.set(watcher).unwrap();
 
@@ -143,19 +135,19 @@ impl Config {
             .map(|raw| expand_tilde(raw))
             .collect();
 
-        let user_dir = PROJECT_DIRS.data_dir().join("wallpapers");
+        let user_dir = APP_HANDLE.path().data_dir().unwrap().join("wallpapers");
         let _ = fs::create_dir_all(&user_dir);
         out.push(user_dir);
 
-        if let Some(res) = RESOURCES_DIR.get() {
-            out.push(res.join("wallpapers"));
-        }
+        out.push(APP_HANDLE.path().resource_dir().unwrap().join("wallpapers"));
         out
     }
 
     pub fn get_monitor_config(&self, index: usize) -> Option<&MonitorConfig> {
         let i1 = index + 1;
-        self.monitors.get(&i1.to_string()).or(self.monitors.get("default"))
+        self.monitors
+            .get(&i1.to_string())
+            .or(self.monitors.get("default"))
     }
 
     /// Scans the wallpapers directory and loads each subdirectory's `manifest.toml`.
@@ -237,5 +229,21 @@ impl From<toml::ser::Error> for ConfigError {
 impl From<notify::Error> for ConfigError {
     fn from(e: notify::Error) -> Self {
         Self::Notify(e)
+    }
+}
+
+pub fn show_config_ui(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("config") {
+        let _ = window.set_focus();
+    } else {
+        let _ = tauri::WebviewWindowBuilder::new(
+            app,
+            "config",
+            tauri::WebviewUrl::App(std::path::PathBuf::from("index.html")),
+        )
+        .title("Configure")
+        .inner_size(800.0, 600.0)
+        .maximizable(false)
+        .build();
     }
 }

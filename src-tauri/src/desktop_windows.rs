@@ -1,10 +1,13 @@
 use serde::Serialize;
 use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 use tauri::Emitter;
 use tauri::EventTarget;
 use tauri::Manager;
 use tauri::{LogicalPosition, LogicalRect, LogicalSize};
 
+use crate::app::APP_HANDLE;
 use crate::config::{MonitorConfig, CONFIG};
 use crate::monitor_info::MONITORS;
 use crate::utils::Tracker;
@@ -13,6 +16,9 @@ use crate::window_info::WINDOWS;
 use crate::window_info::{coverage, filter_windows};
 
 const RUNTIME_JS: &str = include_str!("runtime.js");
+
+pub static DESKTOP_WINDOWS: LazyLock<Mutex<Vec<Option<DesktopWindow>>>> =
+    LazyLock::new(|| Mutex::new(vec![]));
 
 #[derive(Debug)]
 pub enum BackgroundError {
@@ -307,14 +313,14 @@ fn logical_monitor_rect(index: usize) -> Option<LogicalRect<f64, f64>> {
     })
 }
 
-pub(crate) fn calc_visibility(index: usize) -> Option<(f64, bool)> {
+pub(crate) fn calc_desktop_visibility(index: usize) -> Option<(f64, bool)> {
     let Some(rect) = logical_monitor_rect(index) else {
         return None;
     };
     let visible_windows = filter_windows(&WINDOWS.borrow(), &rect).clone();
-    let focused = (&visible_windows).into_iter().filter(|w| w.focused).count() == 0;
+    let desktop_has_focus = visible_windows.iter().filter(|w| w.focused).count() == 0;
     let cov = coverage(&visible_windows, &rect);
-    Some((cov, focused))
+    Some((cov, desktop_has_focus))
 }
 
 /// Manages a single desktop window for one monitor index.
@@ -422,7 +428,9 @@ impl DesktopWindow {
         let mut tracked_focused = Tracker::new(false);
         let mut tracked_cursor_position = Tracker::new((0.0, 0.0));
         let mut tracked_wallpaper = Tracker::new(
-            self.monitor_config().map(|c| c.wallpaper).unwrap_or_default(),
+            self.monitor_config()
+                .map(|c| c.wallpaper)
+                .unwrap_or_default(),
         );
 
         loop {
@@ -446,7 +454,7 @@ impl DesktopWindow {
                     let _ = self.resize_window(&monitor);
                 }
                 Ok(_) = windows_rx.changed() => {
-                    let Some((cov, focused)) = calc_visibility(self.index) else {
+                    let Some((cov, focused)) = calc_desktop_visibility(self.index) else {
                         continue
                     };
                     if tracked_coverage.update(cov) {
@@ -509,4 +517,26 @@ impl Drop for DesktopWindow {
         }
         let _ = self.window.close();
     }
+}
+
+pub fn sync_desktop_windows() -> Result<(), tauri::Error> {
+    let app = &APP_HANDLE;
+    let mut windows = DESKTOP_WINDOWS.lock().unwrap();
+    let monitor_count = MONITORS.borrow().len();
+    let config = CONFIG.borrow().clone();
+
+    windows.resize(monitor_count, None);
+
+    for i in 0..monitor_count {
+        let monitor_config = config.get_monitor_config(i);
+        if monitor_config.is_some() {
+            if windows[i].is_none() {
+                windows[i] = Some(DesktopWindow::new(app, i)?);
+            }
+        } else {
+            windows[i] = None;
+        }
+    }
+
+    Ok(())
 }

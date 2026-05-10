@@ -52,4 +52,4 @@ type = "bool"
 name = "Pause When Hidden"
 group = "Performance"
 description = "Stop animating while the desktop is fully covered by other windows"
-default = true
+default = false

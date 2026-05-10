@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, OnceLock};
 
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{Listener, Manager};
+
+use crate::app::APP_HANDLE;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -40,7 +42,18 @@ impl Translations {
 
 static LOCALES_ONCE_LOCK: OnceLock<Vec<String>> = OnceLock::new();
 
-pub static LOCALES: LazyLock<Vec<String>> = LazyLock::new(|| LOCALES_ONCE_LOCK.wait().clone());
+pub static LOCALES: LazyLock<Vec<String>> = LazyLock::new(|| {
+    let app = APP_HANDLE.clone();
+    let window = app.get_webview_window("background").unwrap();
+
+    app.once("locales", move |event| {
+        let locales: Vec<String> = serde_json::from_str(event.payload()).unwrap_or_default();
+        LOCALES_ONCE_LOCK.set(locales).unwrap();
+    });
+
+    let _ = window.eval("window.__TAURI__.event.emit('locales', navigator.languages)");
+    LOCALES_ONCE_LOCK.wait().clone()
+});
 
 pub static T: LazyLock<Translations> = LazyLock::new(|| {
     let mut map = HashMap::new();
@@ -62,16 +75,3 @@ pub static LOCALE: LazyLock<String> = LazyLock::new(|| {
         .cloned()
         .unwrap_or_else(|| "en-US".to_string())
 });
-
-pub fn init(app: &AppHandle) {
-    let window = app.get_webview_window("background").unwrap();
-
-    let app_clone = app.clone();
-    app.once("locales", move |event| {
-        let locales: Vec<String> = serde_json::from_str(event.payload()).unwrap_or_default();
-        LOCALES_ONCE_LOCK.set(locales).unwrap();
-        app_clone.emit("locales-configured", ()).unwrap();
-    });
-
-    let _ = window.eval("window.__TAURI__.event.emit('locales', navigator.languages)");
-}
