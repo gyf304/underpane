@@ -250,6 +250,7 @@ export function WallpaperEditor() {
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [loading, setLoading] = useState(true);
   const [autostart, setAutostartState] = useState<boolean | null>(null);
+  const [savedAutostart, setSavedAutostart] = useState<boolean | null>(null);
 
   const selectMonitor = (id: string) => {
     setSelectedId(id);
@@ -264,14 +265,14 @@ export function WallpaperEditor() {
         setWallpaperMap(wpMap);
         setSelectedId(monitors[0]?.id ?? null);
         setAutostartState(autostartEnabled);
+        setSavedAutostart(autostartEnabled);
         setLoading(false);
       });
   }, []);
 
   const handleAutostartChange = (enabled: boolean) => {
-    setAutostart(enabled)
-      .then(() => setAutostartState(enabled))
-      .catch(err => console.error("failed to set autostart", err));
+    setAutostartState(enabled);
+    setStatus("unsaved");
   };
 
   const handleWallpaperChange = (monitorId: string, wallpaperId: string | null) => {
@@ -312,6 +313,10 @@ export function WallpaperEditor() {
     setStatus("saving");
     try {
       await writeConfig(config);
+      if (autostart !== null && autostart !== savedAutostart) {
+        await setAutostart(autostart);
+        setSavedAutostart(autostart);
+      }
       setStatus("saved");
     } catch {
       setStatus("error");
