@@ -21,7 +21,12 @@ import {
   type SaveStatus,
 } from "./WallpaperEditor.types";
 import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir, getAutostart, setAutostart } from "./WallpaperEditor.api";
+import { Quickstart, type QuickstartStepId } from "./Quickstart";
 import { t } from "./i18n";
+
+const QUICKSTART_SEEN_KEY = "activedesk.quickstartSeen";
+const DEFAULT_KEY = "default";
+const HIGHLIGHT = "ring-2 ring-primary ring-offset-2 ring-offset-background";
 
 const CANVAS_H = 192;
 
@@ -251,11 +256,35 @@ export function WallpaperEditor() {
   const [loading, setLoading] = useState(true);
   const [autostart, setAutostartState] = useState<boolean | null>(null);
   const [savedAutostart, setSavedAutostart] = useState<boolean | null>(null);
+  const [quickstartOpen, setQuickstartOpen] = useState(false);
+  const [quickstartStep, setQuickstartStep] = useState<QuickstartStepId | null>(null);
 
   const selectMonitor = (id: string) => {
     setSelectedId(id);
     setView("monitor");
   };
+
+  const handleQuickstartOpenChange = (open: boolean) => {
+    setQuickstartOpen(open);
+    if (!open) {
+      setQuickstartStep(null);
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(QUICKSTART_SEEN_KEY, "true");
+      }
+    }
+  };
+
+  // Track the active tour step so we can highlight its target and gate "Next"
+  // until the user reaches the expected state themselves.
+  const handleQuickstartStep = useCallback((id: QuickstartStepId) => {
+    setQuickstartStep(id);
+  }, []);
+
+  useEffect(() => {
+    if (typeof localStorage !== "undefined" && localStorage.getItem(QUICKSTART_SEEN_KEY) !== "true") {
+      setQuickstartOpen(true);
+    }
+  }, []);
 
   useEffect(() => {
     Promise.all([readConfig(), listMonitors(), wallpapers(), getAutostart()])
@@ -331,7 +360,6 @@ export function WallpaperEditor() {
     );
   }
 
-  const DEFAULT_KEY = "default";
   const selMonitor = selectedId ? config?.monitors?.[selectedId] : undefined;
   const selWallpaper = selMonitor?.wallpaper;
   const selManifest = selWallpaper ? wallpaperMap.get(selWallpaper) : null;
@@ -351,6 +379,22 @@ export function WallpaperEditor() {
   const NONE = "__none__";
 
   const isMonitorView = view === "monitor";
+
+  // Gate the tour's "Next" button: each step waits until the user has reached
+  // the expected state themselves before they can advance.
+  const quickstartCanProceed = (() => {
+    switch (quickstartStep) {
+      case "monitors":
+        return isMonitorView && selectedId !== null;
+      case "wallpaper":
+        return Boolean(selMonitor?.wallpaper);
+      case "addWallpapers":
+      case "autostart":
+        return view === "general";
+      default:
+        return true;
+    }
+  })();
 
   return (
     <div className="flex h-full flex-row bg-background text-foreground">
@@ -402,7 +446,8 @@ export function WallpaperEditor() {
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
                   isMonitorView && selectedId === DEFAULT_KEY
                     ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  quickstartStep === "monitors" && HIGHLIGHT
                 )}
               >
                 <span className="w-5 shrink-0 font-mono text-xs font-semibold">*</span>
@@ -421,7 +466,10 @@ export function WallpaperEditor() {
             "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
             view === "general"
               ? "bg-accent text-accent-foreground"
-              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            view !== "general" &&
+              (quickstartStep === "addWallpapers" || quickstartStep === "autostart") &&
+              HIGHLIGHT
           )}
         >
           <Settings className="h-4 w-4 shrink-0" />
@@ -435,7 +483,12 @@ export function WallpaperEditor() {
         <div className="flex shrink-0 items-center gap-3 border-b px-4 py-2.5">
           <div className="flex-1" />
           <StatusBadge status={status} />
-          <Button size="sm" disabled={status !== "unsaved"} onClick={handleSave}>
+          <Button
+            size="sm"
+            disabled={status !== "unsaved"}
+            onClick={handleSave}
+            className={cn(quickstartStep === "config" && HIGHLIGHT)}
+          >
             {t("editor.save")}
           </Button>
         </div>
@@ -473,6 +526,7 @@ export function WallpaperEditor() {
                 <Button
                   size="sm"
                   variant="outline"
+                  className={cn(quickstartStep === "addWallpapers" && HIGHLIGHT)}
                   onClick={() => {
                     openWallpapersDir().catch(err =>
                       console.error("failed to open wallpapers dir", err)
@@ -495,7 +549,23 @@ export function WallpaperEditor() {
                   checked={autostart ?? false}
                   onCheckedChange={handleAutostartChange}
                   disabled={autostart === null}
+                  className={cn(quickstartStep === "autostart" && HIGHLIGHT)}
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium leading-none">
+                  {t("general.quickstart.label")}
+                </Label>
+                <p className="text-xs leading-snug text-muted-foreground">
+                  {t("general.quickstart.desc")}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setQuickstartOpen(true)}
+                >
+                  {t("general.quickstart.button")}
+                </Button>
               </div>
             </div>
           ) : !selectedId ? (
@@ -513,7 +583,12 @@ export function WallpaperEditor() {
                     handleWallpaperChange(selectedId, v === NONE ? null : v)
                   }
                 >
-                  <SelectTrigger className="h-8 w-full text-sm">
+                  <SelectTrigger
+                    className={cn(
+                      "h-8 w-full text-sm",
+                      quickstartStep === "wallpaper" && HIGHLIGHT
+                    )}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -561,6 +636,13 @@ export function WallpaperEditor() {
           )}
         </div>
       </div>
+
+      <Quickstart
+        open={quickstartOpen}
+        onOpenChange={handleQuickstartOpenChange}
+        onStepChange={handleQuickstartStep}
+        canProceed={quickstartCanProceed}
+      />
     </div>
   );
 }

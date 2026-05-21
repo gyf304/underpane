@@ -25,6 +25,30 @@ const messages: Record<string, string> = {
 
   "general.autostart.label": "Launch at login",
   "general.autostart.desc": "Automatically start ActiveDesk when you log in.",
+
+  "general.quickstart.label": "Quickstart",
+  "general.quickstart.desc": "Replay the welcome tour.",
+  "general.quickstart.button": "Show quickstart",
+
+  "quickstart.skip": "Skip",
+  "quickstart.back": "Back",
+  "quickstart.next": "Next",
+  "quickstart.done": "Done",
+
+  "quickstart.welcome.title": "Welcome to ActiveDesk",
+  "quickstart.welcome.desc": "ActiveDesk lets you set a live wallpaper for each of your monitors. Here's a quick tour.",
+  "quickstart.monitors.title": "1. Pick a monitor",
+  "quickstart.monitors.desc": "Click a monitor in the left panel to configure it. The top of the panel shows the arrangement of your monitor layout for reference. Pick “*” to apply one wallpaper to every monitor at once.",
+  "quickstart.wallpaper.title": "2. Choose a wallpaper",
+  "quickstart.wallpaper.desc": "With a monitor selected, pick a wallpaper from the dropdown (or “None” to clear it).",
+  "quickstart.config.title": "3. Adjust settings",
+  "quickstart.config.desc": "Each wallpaper exposes its own options: toggles, sliders, and inputs grouped by category. Click Save in the top-right toolbar to apply your changes.",
+  "quickstart.addWallpapers.title": "4. Add more wallpapers",
+  "quickstart.addWallpapers.desc": "Open General Settings (bottom-left), then click “Open wallpapers folder” and drop new wallpaper folders inside to install them.",
+  "quickstart.autostart.title": "5. Launch at login",
+  "quickstart.autostart.desc": "Still in General Settings, turn on “Launch at login” so ActiveDesk starts automatically, then Save to apply it.",
+  "quickstart.done.title": "You're all set",
+  "quickstart.done.desc": "That's everything. Welcome to ActiveDesk! You can revisit this quickstart anytime from General Settings.",
 };
 
 export default messages;

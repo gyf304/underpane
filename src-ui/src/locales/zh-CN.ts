@@ -25,6 +25,30 @@ const messages: Record<string, string> = {
 
   "general.autostart.label": "登录时启动",
   "general.autostart.desc": "登录时自动启动 ActiveDesk。",
+
+  "general.quickstart.label": "快速入门",
+  "general.quickstart.desc": "重新播放欢迎导览。",
+  "general.quickstart.button": "显示快速入门",
+
+  "quickstart.skip": "跳过",
+  "quickstart.back": "上一步",
+  "quickstart.next": "下一步",
+  "quickstart.done": "完成",
+
+  "quickstart.welcome.title": "欢迎使用 ActiveDesk",
+  "quickstart.welcome.desc": "ActiveDesk 可以为每台显示器分别设置动态壁纸。下面带您快速熟悉一下主要功能。",
+  "quickstart.monitors.title": "1. 选择显示器",
+  "quickstart.monitors.desc": "在左侧面板点击一台显示器即可进行设置。面板顶部的示意图对应您的实际显示器布局，可供参考。选择「*」可为所有显示器统一应用同一张壁纸。",
+  "quickstart.wallpaper.title": "2. 选择壁纸",
+  "quickstart.wallpaper.desc": "选中显示器后，在下拉菜单中选择一张壁纸；如需清除，选择「无」即可。",
+  "quickstart.config.title": "3. 调整设置",
+  "quickstart.config.desc": "每张壁纸都有各自的选项，包括开关、滑块和输入框，并按类别分组。点击右上角工具栏的「保存」即可应用更改。",
+  "quickstart.addWallpapers.title": "4. 添加更多壁纸",
+  "quickstart.addWallpapers.desc": "打开左下角的「常规设置」，点击「打开壁纸文件夹」，将新的壁纸文件夹放入其中即可安装。",
+  "quickstart.autostart.title": "5. 登录时启动",
+  "quickstart.autostart.desc": "在「常规设置」中开启「登录时启动」，ActiveDesk 便会随系统自动运行；完成后点击「保存」以应用。",
+  "quickstart.done.title": "一切就绪",
+  "quickstart.done.desc": "以上就是全部内容，欢迎使用 ActiveDesk！您随时可以在「常规设置」中重新查看本快速入门。",
 };
 
 export default messages;
