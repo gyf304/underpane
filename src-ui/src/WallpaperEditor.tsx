@@ -24,7 +24,7 @@ import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, open
 import { Quickstart, type QuickstartStepId } from "./Quickstart";
 import { t } from "./i18n";
 
-const QUICKSTART_SEEN_KEY = "activedesk.quickstartSeen";
+const QUICKSTART_SEEN_KEY = "underpane.quickstartSeen";
 const DEFAULT_KEY = "default";
 const HIGHLIGHT = "ring-2 ring-primary ring-offset-2 ring-offset-background";
 

@@ -62,7 +62,7 @@ pub fn run() {
             handlers::set_autostart,
         ])
         .register_asynchronous_uri_scheme_protocol(
-            "activedesk-wallpaper",
+            "underpane-wallpaper",
             |_ctx, request, responder| {
                 tauri::async_runtime::spawn(async move {
                     let resp = protocol::handle(request).await;

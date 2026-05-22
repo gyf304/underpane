@@ -96,14 +96,14 @@ try {
 	config = initialConfig;
 	setHashTransient(encodeConfigHash(config));
 } catch (e) {
-	console.error("activedesk: failed to load initial state", e);
+	console.error("underpane: failed to load initial state", e);
 }
 
 function covered(coverage) {
 	return coverage >= coverageThreshold;
 }
 
-class ActiveDesk extends EventTarget {
+class Underpane extends EventTarget {
 	constructor() {
 		super();
 	}
@@ -133,22 +133,22 @@ class ActiveDesk extends EventTarget {
 	}
 }
 
-const activeDesk = new ActiveDesk();
-window.activeDesk = activeDesk;
+const underpane = new Underpane();
+window.underpane = underpane;
 
 webviewWindow.listen("desktop-focus", (event) => {
 	focused = event.payload.focused;
-	activeDesk.dispatchEvent(new FocusEvent(focused ? "focus" : "blur"));
+	underpane.dispatchEvent(new FocusEvent(focused ? "focus" : "blur"));
 });
 
 webviewWindow.listen("desktop-coverage", (event) => {
 	const prevCoverage = coverage;
 	coverage = event.payload.coverage;
-	activeDesk.dispatchEvent(
+	underpane.dispatchEvent(
 		new CustomEvent("coveragechange", { detail: { coverage } })
 	);
 	if (covered(prevCoverage) !== covered(coverage)) {
-		activeDesk.dispatchEvent(new Event("visibilitychange", {}))
+		underpane.dispatchEvent(new Event("visibilitychange", {}))
 	}
 });
 
@@ -173,7 +173,7 @@ function setHashTransient(hash) {
 webviewWindow.listen("config-change", (event) => {
 	config = event.payload.config;
 	setHashTransient(encodeConfigHash(config));
-	activeDesk.dispatchEvent(
+	underpane.dispatchEvent(
 		new CustomEvent("configchange", { detail: { config } })
 	);
 });
@@ -185,20 +185,20 @@ const documentRemoveEventListener = document.removeEventListener.bind(document);
 
 // Intercept document.visibilityState
 Object.defineProperty(document, "visibilityState", {
-	get() { return activeDesk.visibilityState; },
+	get() { return underpane.visibilityState; },
 	configurable: true,
 });
 
 // Intercept document.hasFocus
 Object.defineProperty(document, "hasFocus", {
-	get() { return () => activeDesk.focused; },
+	get() { return () => underpane.focused; },
 	configurable: true,
 });
 
 // Intercept window.addEventListener/removeEventListener for blur and focus
 window.addEventListener = function (type, listener, options) {
 	if (type === "blur" || type === "focus") {
-		activeDesk.addEventListener(type, listener, options);
+		underpane.addEventListener(type, listener, options);
 	} else {
 		windowAddEventListener(type, listener, options);
 	}
@@ -206,7 +206,7 @@ window.addEventListener = function (type, listener, options) {
 
 window.removeEventListener = function (type, listener, options) {
 	if (type === "blur" || type === "focus") {
-		activeDesk.removeEventListener(type, listener, options);
+		underpane.removeEventListener(type, listener, options);
 	} else {
 		windowRemoveEventListener(type, listener, options);
 	}
@@ -215,14 +215,14 @@ window.removeEventListener = function (type, listener, options) {
 // Intercept document.addEventListener/removeEventListener for visibilitychange
 document.addEventListener = function (type, listener, options) {
 	if (type === "visibilitychange" || type === "blur" || type === "focus") {
-		activeDesk.addEventListener(type, listener, options);
+		underpane.addEventListener(type, listener, options);
 	} else {
 		documentAddEventListener(type, listener, options);
 	}
 };
 document.removeEventListener = function (type, listener, options) {
 	if (type === "visibilitychange" || type === "blur" || type === "focus") {
-		activeDesk.removeEventListener(type, listener, options);
+		underpane.removeEventListener(type, listener, options);
 	} else {
 		documentRemoveEventListener(type, listener, options);
 	}
@@ -234,9 +234,9 @@ let windowOnfocus = null;
 Object.defineProperty(window, "onblur", {
 	get() { return windowOnblur; },
 	set(handler) {
-		if (windowOnblur) activeDesk.removeEventListener("blur", windowOnblur);
+		if (windowOnblur) underpane.removeEventListener("blur", windowOnblur);
 		windowOnblur = handler;
-		if (handler) activeDesk.addEventListener("blur", handler);
+		if (handler) underpane.addEventListener("blur", handler);
 	},
 	configurable: true,
 });
@@ -244,9 +244,9 @@ Object.defineProperty(window, "onblur", {
 Object.defineProperty(window, "onfocus", {
 	get() { return windowOnfocus; },
 	set(handler) {
-		if (windowOnfocus) activeDesk.removeEventListener("focus", windowOnfocus);
+		if (windowOnfocus) underpane.removeEventListener("focus", windowOnfocus);
 		windowOnfocus = handler;
-		if (handler) activeDesk.addEventListener("focus", handler);
+		if (handler) underpane.addEventListener("focus", handler);
 	},
 	configurable: true,
 });
@@ -258,9 +258,9 @@ let documentOnfocus = null;
 Object.defineProperty(document, "onvisibilitychange", {
 	get() { return documentOnvisibilitychange; },
 	set(handler) {
-		if (documentOnvisibilitychange) activeDesk.removeEventListener("visibilitychange", documentOnvisibilitychange);
+		if (documentOnvisibilitychange) underpane.removeEventListener("visibilitychange", documentOnvisibilitychange);
 		documentOnvisibilitychange = handler;
-		if (handler) activeDesk.addEventListener("visibilitychange", handler);
+		if (handler) underpane.addEventListener("visibilitychange", handler);
 	},
 	configurable: true,
 });
@@ -268,9 +268,9 @@ Object.defineProperty(document, "onvisibilitychange", {
 Object.defineProperty(document, "onblur", {
 	get() { return documentOnblur; },
 	set(handler) {
-		if (documentOnblur) activeDesk.removeEventListener("blur", documentOnblur);
+		if (documentOnblur) underpane.removeEventListener("blur", documentOnblur);
 		documentOnblur = handler;
-		if (handler) activeDesk.addEventListener("blur", handler);
+		if (handler) underpane.addEventListener("blur", handler);
 	},
 	configurable: true,
 });
@@ -278,9 +278,9 @@ Object.defineProperty(document, "onblur", {
 Object.defineProperty(document, "onfocus", {
 	get() { return documentOnfocus; },
 	set(handler) {
-		if (documentOnfocus) activeDesk.removeEventListener("focus", documentOnfocus);
+		if (documentOnfocus) underpane.removeEventListener("focus", documentOnfocus);
 		documentOnfocus = handler;
-		if (handler) activeDesk.addEventListener("focus", handler);
+		if (handler) underpane.addEventListener("focus", handler);
 	},
 	configurable: true,
 });

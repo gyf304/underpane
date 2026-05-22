@@ -1,8 +1,8 @@
-# ActiveDesk
+# Underpane
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Live HTML wallpapers for macOS and Windows. ActiveDesk renders any web page as your desktop background, with per-monitor configuration.
+Live HTML wallpapers for macOS and Windows. Underpane renders any web page as your desktop background, with per-monitor configuration.
 
 ## Features
 

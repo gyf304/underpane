@@ -280,7 +280,7 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 fn wallpaper_url(wallpaper: &str) -> url::Url {
-    let mut u = url::Url::parse("activedesk-wallpaper://wallpaper").unwrap();
+    let mut u = url::Url::parse("underpane-wallpaper://wallpaper").unwrap();
     u.set_host(Some(wallpaper)).unwrap();
     u
 }
@@ -288,7 +288,7 @@ fn wallpaper_url(wallpaper: &str) -> url::Url {
 fn wallpaper_navigate_url(wallpaper: &str) -> url::Url {
     #[cfg(windows)]
     // wry's custom-protocol workaround for WebView2: maps custom-scheme://host → http://custom-scheme.host
-    return url::Url::parse(&format!("http://activedesk-wallpaper.{wallpaper}")).unwrap();
+    return url::Url::parse(&format!("http://underpane-wallpaper.{wallpaper}")).unwrap();
 
     #[cfg(not(windows))]
     return wallpaper_url(wallpaper);
@@ -355,7 +355,7 @@ impl DesktopWindow {
                 &label,
                 tauri::WebviewUrl::CustomProtocol(wallpaper_url(&monitor_config.wallpaper)),
             )
-            .title("activedesk")
+            .title("underpane")
             .transparent(true)
             .decorations(false)
             .focused(false)

@@ -54,7 +54,7 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
                     true
                 });
             }
-            Err(e) => eprintln!("activedesk: config reload failed: {e}"),
+            Err(e) => eprintln!("underpane: config reload failed: {e}"),
         }
     })
     .unwrap();

@@ -1,8 +1,8 @@
-# ActiveDesk
+# Underpane
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-适用于 macOS 与 Windows 的动态 HTML 壁纸。ActiveDesk 可将任意网页作为桌面背景渲染,支持按显示器分别配置。
+适用于 macOS 与 Windows 的动态 HTML 壁纸。Underpane 可将任意网页作为桌面背景渲染,支持按显示器分别配置。
 
 ## 特性
 
