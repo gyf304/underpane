@@ -4,7 +4,7 @@ use crate::monitor_info::{current_monitors, MonitorInfo};
 use crate::wallpapers::WallpaperManifest;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use tauri::{AppHandle, Window};
+use tauri::{AppHandle, Webview, Window};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -110,4 +110,14 @@ pub fn get_config(window: Window) -> Result<WallpaperConfig, String> {
         .get_monitor_config(index)
         .ok_or_else(|| "no config for monitor".to_string())?;
     Ok(monitor_config.config.clone())
+}
+
+#[tauri::command]
+pub fn runtime_log(webview: Webview, level: String, message: String) {
+    let line = format!("[{} {level}] {message}", webview.label());
+    if level == "warn" || level == "error" {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
+    }
 }

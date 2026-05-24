@@ -4,6 +4,8 @@
 
 Live HTML wallpapers for macOS and Windows. Underpane renders any web page as your desktop background, with per-monitor configuration.
 
+https://github.com/gyf304/underpane/raw/main/docs/demo.mp4
+
 ## Features
 
 - HTML/CSS/JS wallpapers — any web content as a desktop background

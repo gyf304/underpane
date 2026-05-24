@@ -9,6 +9,7 @@ use tauri::{LogicalPosition, LogicalRect, LogicalSize};
 
 use crate::app::APP_HANDLE;
 use crate::config::{MonitorConfig, CONFIG};
+use crate::cursor_position::CURSOR_POSITION;
 use crate::monitor_info::MONITORS;
 use crate::utils::Tracker;
 use crate::wallpapers::WallpaperManifest;
@@ -421,12 +422,10 @@ impl DesktopWindow {
         let mut config_rx = CONFIG.clone();
         let mut monitors_rx = MONITORS.clone();
         let mut windows_rx = WINDOWS.clone();
-
-        let mut cursor_tick = tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / 30.0));
+        let mut cursor_rx = CURSOR_POSITION.clone();
 
         let mut tracked_coverage = Tracker::new(0.0);
         let mut tracked_focused = Tracker::new(false);
-        let mut tracked_cursor_position = Tracker::new((0.0, 0.0));
         let mut tracked_wallpaper = Tracker::new(
             self.monitor_config()
                 .map(|c| c.wallpaper)
@@ -470,10 +469,11 @@ impl DesktopWindow {
                         );
                     }
                 }
-                _ = cursor_tick.tick() => {
-                    let Ok(cursor) = self.window.app_handle().cursor_position() else {
+                Ok(_) = cursor_rx.changed() => {
+                    if *tracked_coverage.get() >= 1.0 {
                         continue;
-                    };
+                    }
+                    let cursor = *cursor_rx.borrow_and_update();
 
                     let monitor = MONITORS
                         .borrow()
@@ -486,13 +486,10 @@ impl DesktopWindow {
                     let x = (cursor.x - pos.x as f64) / sf;
                     let y = (cursor.y - pos.y as f64) / sf;
 
-                    let cursor_position = (x, y);
-                    if tracked_cursor_position.update(cursor_position) {
-                        let _ = self.emit(
-                            "cursor-position",
-                            serde_json::json!({ "x": x, "y": y }),
-                        );
-                    }
+                    let _ = self.emit(
+                        "cursor-position",
+                        serde_json::json!({ "x": x, "y": y }),
+                    );
                 }
             }
         }

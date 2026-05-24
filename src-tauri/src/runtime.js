@@ -3,39 +3,38 @@ class MouseSimulator {
 
 	move(x, y) {
 		const el = document.elementFromPoint(x, y);
-		if (!el) return;
-
-		if (this.#prevEl && this.#prevEl !== el) {
-			const leaving = this.#getLeavingElements(this.#prevEl, el);
-			const entering = this.#getEnteringElements(this.#prevEl, el);
-
-			leaving.forEach(a => a.dispatchEvent(new MouseEvent("mouseleave", {
-				bubbles: false, clientX: x, clientY: y, view: window, relatedTarget: el
-			})));
-
-			this.#prevEl.dispatchEvent(new MouseEvent("mouseout", {
-				bubbles: true, clientX: x, clientY: y, view: window, relatedTarget: el
-			}));
-
-			el.dispatchEvent(new MouseEvent("mouseover", {
-				bubbles: true, clientX: x, clientY: y, view: window, relatedTarget: this.#prevEl
-			}));
-
-			entering.forEach(a => a.dispatchEvent(new MouseEvent("mouseenter", {
-				bubbles: false, clientX: x, clientY: y, view: window, relatedTarget: this.#prevEl
-			})));
+		if (!el) {
+			this.#prevEl = null;
+			return null;
 		}
 
-		el.dispatchEvent(new MouseEvent("mousemove", {
-			bubbles: true, clientX: x, clientY: y, view: window
-		}));
+		const base = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window };
+
+		if (this.#prevEl !== el) {
+			const prev = this.#prevEl;
+			if (prev) {
+				const leaving = this.#getLeavingElements(prev, el);
+				prev.dispatchEvent(new PointerEvent("pointerout", { ...base, pointerType: "mouse", relatedTarget: el }));
+				prev.dispatchEvent(new MouseEvent("mouseout", { ...base, relatedTarget: el }));
+				for (const a of leaving) {
+					a.dispatchEvent(new PointerEvent("pointerleave", { ...base, bubbles: false, pointerType: "mouse", relatedTarget: el }));
+					a.dispatchEvent(new MouseEvent("mouseleave", { ...base, bubbles: false, relatedTarget: el }));
+				}
+			}
+			el.dispatchEvent(new PointerEvent("pointerover", { ...base, pointerType: "mouse", relatedTarget: prev }));
+			el.dispatchEvent(new MouseEvent("mouseover", { ...base, relatedTarget: prev }));
+			const entering = this.#getEnteringElements(prev, el);
+			for (const a of entering) {
+				a.dispatchEvent(new PointerEvent("pointerenter", { ...base, bubbles: false, pointerType: "mouse", relatedTarget: prev }));
+				a.dispatchEvent(new MouseEvent("mouseenter", { ...base, bubbles: false, relatedTarget: prev }));
+			}
+		}
+
+		el.dispatchEvent(new PointerEvent("pointermove", { ...base, pointerType: "mouse" }));
+		el.dispatchEvent(new MouseEvent("mousemove", base));
 
 		this.#prevEl = el;
 		return el;
-	}
-
-	reset() {
-		this.#prevEl = null;
 	}
 
 	#isAncestor(candidate, el) {
@@ -48,27 +47,24 @@ class MouseSimulator {
 	}
 
 	#getLeavingElements(prevEl, nextEl) {
-		const leaving = [];
+		const out = [];
 		let current = prevEl;
 		while (current) {
-			if (!this.#isAncestor(current, nextEl) && current !== nextEl) {
-				leaving.push(current);
-			}
+			if (!this.#isAncestor(current, nextEl) && current !== nextEl) out.push(current);
 			current = current.parentElement;
 		}
-		return leaving;
+		return out;
 	}
 
 	#getEnteringElements(prevEl, nextEl) {
-		const entering = [];
+		const out = [];
 		let current = nextEl;
 		while (current) {
-			if (!this.#isAncestor(current, prevEl) && current !== prevEl) {
-				entering.push(current);
-			}
+			if (prevEl && (this.#isAncestor(current, prevEl) || current === prevEl)) break;
+			out.push(current);
 			current = current.parentElement;
 		}
-		return entering.reverse(); // top-down order
+		return out.reverse();
 	}
 }
 
@@ -77,7 +73,51 @@ const mouse = new MouseSimulator();
 const webviewWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
 const invoke = window.__TAURI__.core.invoke;
 
-webviewWindow.listen("cursor-position", function (event) {
+{
+	const originalConsole = console;
+	const forwardedLevels = new Set(["log", "info", "debug", "warn", "error", "trace"]);
+	const wrapperCache = new Map();
+
+	const formatArg = (a) => {
+		if (typeof a === "string") return a;
+		if (a instanceof Error) return a.stack || `${a.name}: ${a.message}`;
+		try { return JSON.stringify(a); } catch { return String(a); }
+	};
+
+	const proxied = new Proxy(originalConsole, {
+		get(target, prop, receiver) {
+			const value = Reflect.get(target, prop, receiver);
+			if (typeof prop !== "string" || !forwardedLevels.has(prop) || typeof value !== "function") {
+				return typeof value === "function" ? value.bind(target) : value;
+			}
+			let wrapped = wrapperCache.get(prop);
+			if (!wrapped) {
+				const original = value.bind(target);
+				wrapped = (...args) => {
+					original(...args);
+					try {
+						const message = args.map(formatArg).join(" ");
+						invoke("runtime_log", { level: prop, message }).catch(() => {});
+					} catch {
+						// Never let logging break the caller.
+					}
+				};
+				wrapperCache.set(prop, wrapped);
+			}
+			return wrapped;
+		},
+	});
+
+	try {
+		window.console = proxied;
+	} catch {
+		Object.defineProperty(globalThis, "console", {
+			value: proxied, configurable: true, writable: true,
+		});
+	}
+}
+
+webviewWindow.listen("cursor-position", (event) => {
 	mouse.move(event.payload.x, event.payload.y);
 });
 
@@ -134,7 +174,6 @@ class Underpane extends EventTarget {
 }
 
 const underpane = new Underpane();
-window.underpane = underpane;
 
 webviewWindow.listen("desktop-focus", (event) => {
 	focused = event.payload.focused;

@@ -4,6 +4,8 @@
 
 适用于 macOS 与 Windows 的动态 HTML 壁纸。Underpane 可将任意网页作为桌面背景渲染,支持按显示器分别配置。
 
+https://github.com/gyf304/underpane/raw/main/docs/demo.mp4
+
 ## 特性
 
 - HTML/CSS/JS 壁纸 —— 任意网页内容均可作为桌面背景

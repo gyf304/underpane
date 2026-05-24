@@ -1,6 +1,15 @@
 use crate::config::CONFIG;
 
 const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
+const CSP: &str = "default-src 'self' 'unsafe-inline' ipc: http://ipc.localhost";
+
+pub async fn handle(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
+    let mut response = handle_inner(request).await;
+    response
+        .headers_mut()
+        .insert("Content-Security-Policy", CSP.parse().unwrap());
+    response
+}
 
 fn not_found() -> tauri::http::Response<Vec<u8>> {
     tauri::http::Response::builder()
@@ -10,7 +19,7 @@ fn not_found() -> tauri::http::Response<Vec<u8>> {
         .unwrap()
 }
 
-pub async fn handle(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
+async fn handle_inner(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
     let uri = request.uri();
     let wallpaper = uri.host().unwrap();
     let mut path = uri.path().trim_matches('/').to_string();

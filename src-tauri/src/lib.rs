@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod cursor_position;
 mod desktop_windows;
 mod handlers;
 mod locale;
@@ -60,6 +61,7 @@ pub fn run() {
             handlers::get_config,
             handlers::get_autostart,
             handlers::set_autostart,
+            handlers::runtime_log,
         ])
         .register_asynchronous_uri_scheme_protocol(
             "underpane-wallpaper",
