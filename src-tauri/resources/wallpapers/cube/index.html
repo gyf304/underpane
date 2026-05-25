@@ -371,7 +371,9 @@ function frame() {
 
   const dt = (nowReal - lastReal) / 1000;
   lastReal = nowReal;
-  simTime += dt * speed;
+  // Loop simTime at the exact shader period (cos(0.3*iTime+...)) so fp32
+  // precision in the GL uniform stays high during multi-hour runs.
+  simTime = (simTime + dt * speed) % (2 * Math.PI / 0.3);
 
   if (fpsLimitEnabled) {
     const minInterval = 1000 / fpsLimit;

@@ -425,7 +425,10 @@ function frame() {
 
   const dt = (nowReal - lastReal) / 1000;
   lastReal = nowReal;
-  simTime += dt * speed;
+  // Bound simTime so fp32 precision in the GL uniform stays high during
+  // multi-hour runs. The shader's trig frequencies are irrational so there's
+  // no clean period; the wrap causes a one-time camera snap per cycle.
+  simTime = (simTime + dt * speed) % 3600;
 
   if (fpsLimitEnabled) {
     const minInterval = 1000 / fpsLimit;
