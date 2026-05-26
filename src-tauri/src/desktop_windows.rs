@@ -123,11 +123,8 @@ fn set_window_as_background_macos(
     Ok(())
 }
 
-/// Reparents the given Tauri webview window into a `WorkerW` sibling of
-/// Progman so it sits between the desktop wallpaper and the desktop icons.
-///
-/// Uses the well-known Progman `0x052C` message trick (as employed by
-/// Lively Wallpaper / Wallpaper Engine) to spawn the WorkerW.
+/// Reparents the Tauri webview window so it sits between the desktop wallpaper
+/// and the desktop icons.
 #[cfg(windows)]
 fn set_window_as_background_windows(
     window: &tauri::WebviewWindow,
@@ -136,39 +133,38 @@ fn set_window_as_background_windows(
     use windows::core::{BOOL, PCWSTR};
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, FindWindowExW, FindWindowW, GetClassNameW, GetWindowLongPtrW,
-        SendMessageTimeoutW, SetParent, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
-        HWND_BOTTOM, HWND_TOP, SMTO_NORMAL, SWP_NOACTIVATE, SWP_SHOWWINDOW, WS_EX_NOACTIVATE,
-        WS_EX_TOOLWINDOW, WS_POPUP, WS_VISIBLE,
+        EnumWindows, FindWindowExW, FindWindowW, GetWindowLongPtrW, SendMessageTimeoutW, SetParent,
+        SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_BOTTOM, SMTO_NORMAL,
+        SWP_NOACTIVATE, SWP_SHOWWINDOW, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
+        WS_EX_TOOLWINDOW, WS_VISIBLE,
     };
 
     let hwnd = window.hwnd()?;
 
     unsafe {
-        // 1. Find Progman.
         let progman = FindWindowW(PCWSTR(wide("Progman").as_ptr()), PCWSTR::null())?;
 
-        // 2. Tell Progman to spawn a WorkerW behind the desktop icons.
+        // 0x052C asks Progman to spawn a WorkerW behind the desktop icons.
         let mut result: usize = 0;
         SendMessageTimeoutW(
             progman,
             0x052C,
-            WPARAM(0),
-            LPARAM(0),
+            WPARAM(0xD),
+            LPARAM(0x1),
             SMTO_NORMAL,
             1000,
             Some(&mut result as *mut _ as *mut _),
         );
 
-        // 3. Find whichever top-level window hosts the desktop icon layer
-        //    (SHELLDLL_DefView child). On some Windows versions this is a
-        //    WorkerW; on Windows 11 it's often Progman itself.
+        // Find SHELLDLL_DefView and the WorkerW immediately following its host
+        // top-level window in z-order (the wallpaper slot).
         struct Ctx {
-            icon_host: HWND,
+            shell_def_view: HWND,
+            worker_w: HWND,
         }
         unsafe extern "system" fn enum_proc(top: HWND, lparam: LPARAM) -> BOOL {
             let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
-            let shell_view = unsafe {
+            let p = unsafe {
                 FindWindowExW(
                     Some(top),
                     None,
@@ -176,58 +172,46 @@ fn set_window_as_background_windows(
                     PCWSTR::null(),
                 )
             };
-            if shell_view.is_ok() && !shell_view.unwrap().is_invalid() {
-                ctx.icon_host = top;
-                return BOOL(0);
+            if let Ok(p) = p {
+                if !p.is_invalid() {
+                    ctx.shell_def_view = p;
+                    if let Ok(w) = unsafe {
+                        FindWindowExW(
+                            None,
+                            Some(top),
+                            PCWSTR(wide("WorkerW").as_ptr()),
+                            PCWSTR::null(),
+                        )
+                    } {
+                        ctx.worker_w = w;
+                    }
+                }
             }
             BOOL(1)
         }
         let mut ctx = Ctx {
-            icon_host: HWND::default(),
+            shell_def_view: HWND::default(),
+            worker_w: HWND::default(),
         };
         let _ = EnumWindows(Some(enum_proc), LPARAM(&mut ctx as *mut _ as isize));
 
-        // 4. Choose parent:
-        //    - If the icon host is a WorkerW, find the *other* WorkerW that
-        //      lives behind it (the classic Wallpaper Engine slot).
-        //    - If the icon host is Progman (Windows 11 common case), parent
-        //      under Progman directly and push to HWND_BOTTOM so we sit
-        //      behind SHELLDLL_DefView. Progman is always at HWND_BOTTOM in
-        //      the top-level Z-order, so everything else stays above us.
-        let icon_host_class = {
-            let mut buf = [0u16; 64];
-            let n = GetClassNameW(ctx.icon_host, &mut buf);
-            String::from_utf16_lossy(&buf[..n as usize])
-        };
-
-        let (parent, needs_bottom) = if icon_host_class == "WorkerW" {
-            // Find a WorkerW that is NOT the icon host.
-            let worker_class = wide("WorkerW");
-            let mut behind = HWND::default();
-            let mut cur = FindWindowExW(None, None, PCWSTR(worker_class.as_ptr()), PCWSTR::null());
-            while let Ok(w) = cur {
-                if w.is_invalid() {
-                    break;
-                }
-                if w != ctx.icon_host {
-                    behind = w;
-                    break;
-                }
-                cur = FindWindowExW(None, Some(w), PCWSTR(worker_class.as_ptr()), PCWSTR::null());
+        // Raised desktop: Progman has WS_EX_NOREDIRECTIONBITMAP; the wallpaper
+        // WorkerW is a child of Progman.
+        let progman_ex = GetWindowLongPtrW(progman, GWL_EXSTYLE);
+        let is_raised = (progman_ex & WS_EX_NOREDIRECTIONBITMAP.0 as isize) != 0;
+        if is_raised {
+            if let Ok(w) = FindWindowExW(
+                Some(progman),
+                None,
+                PCWSTR(wide("WorkerW").as_ptr()),
+                PCWSTR::null(),
+            ) {
+                ctx.worker_w = w;
             }
-            let p = if !behind.is_invalid() {
-                behind
-            } else {
-                progman
-            };
-            (p, false)
-        } else {
-            // icon_host is Progman: parent under it and sit behind its children.
-            (progman, true)
-        };
+        }
 
-        // 5. Strip decorations & taskbar visibility, mark non-activating.
-        SetWindowLongPtrW(hwnd, GWL_STYLE, (WS_POPUP.0 | WS_VISIBLE.0) as isize);
+        let style = WS_CHILD.0 | WS_VISIBLE.0;
+        SetWindowLongPtrW(hwnd, GWL_STYLE, style as isize);
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(
             hwnd,
@@ -235,28 +219,31 @@ fn set_window_as_background_windows(
             ex | (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as isize,
         );
 
-        // 6. Reparent.
+        let parent = if is_raised { progman } else { ctx.worker_w };
         let _ = SetParent(hwnd, Some(parent));
 
-        // 7. Position to cover the monitor in physical pixels.
-        //    When parented under Progman, insert just behind SHELLDLL_DefView
-        //    so icons stay above us but we're in front of any deeper children
-        //    (e.g. the WorkerW child) that would otherwise occlude us.
+        // On legacy desktops, SetParent does not move WebView2's DComp visuals,
+        // so the wallpaper stays invisible. Calling SetParentWindow here on a
+        // raised desktop would hoist Chrome_WidgetWin_0 above SHELLDLL_DefView
+        // and obscure the icons.
+        if !is_raised {
+            let parent_raw = parent.0 as usize;
+            let _ = window.with_webview(move |webview| {
+                #[cfg(windows)]
+                unsafe {
+                    let _ = webview
+                        .controller()
+                        .SetParentWindow(HWND(parent_raw as *mut std::ffi::c_void));
+                }
+            });
+        }
+
         let pos = monitor.position();
         let size = monitor.size();
-        let shell_view = FindWindowExW(
-            Some(parent),
-            None,
-            PCWSTR(wide("SHELLDLL_DefView").as_ptr()),
-            PCWSTR::null(),
-        )
-        .unwrap_or_default();
-        let z = if needs_bottom && !shell_view.is_invalid() {
-            shell_view // just behind the icon layer
-        } else if needs_bottom {
-            HWND_BOTTOM
+        let z = if !ctx.shell_def_view.is_invalid() {
+            ctx.shell_def_view
         } else {
-            HWND_TOP
+            HWND_BOTTOM
         };
         let _ = SetWindowPos(
             hwnd,
@@ -288,7 +275,7 @@ fn wallpaper_url(wallpaper: &str) -> url::Url {
 
 fn wallpaper_navigate_url(wallpaper: &str) -> url::Url {
     #[cfg(windows)]
-    // wry's custom-protocol workaround for WebView2: maps custom-scheme://host → http://custom-scheme.host
+    // wry's custom-protocol workaround for WebView2: maps custom-scheme://host -> http://custom-scheme.host
     return url::Url::parse(&format!("http://underpane-wallpaper.{wallpaper}")).unwrap();
 
     #[cfg(not(windows))]
