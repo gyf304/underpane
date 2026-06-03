@@ -15,7 +15,7 @@ static WATCHER: OnceLock<notify::RecommendedWatcher> = OnceLock::new();
 pub static CONFIG_FILENAME: &str = "config.toml";
 
 pub static CONFIG_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
-    let config_dir = APP_HANDLE.path().config_dir().unwrap();
+    let config_dir = APP_HANDLE.path().app_config_dir().unwrap();
     fs::create_dir_all(&config_dir).expect("cannot create config dir");
     config_dir.join("config.toml")
 });
@@ -24,7 +24,7 @@ pub static CONFIG: LazyLock<watch::Receiver<Config>> = LazyLock::new(|| {
     let initial = Config::load().unwrap_or_default();
     let (tx, rx) = watch::channel(initial);
 
-    let watch_dir = APP_HANDLE.path().config_dir().unwrap();
+    let watch_dir = APP_HANDLE.path().app_config_dir().unwrap();
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
@@ -135,7 +135,7 @@ impl Config {
             .map(|raw| expand_tilde(raw))
             .collect();
 
-        let user_dir = APP_HANDLE.path().data_dir().unwrap().join("wallpapers");
+        let user_dir = APP_HANDLE.path().app_data_dir().unwrap().join("wallpapers");
         let _ = fs::create_dir_all(&user_dir);
         out.push(user_dir);
 
