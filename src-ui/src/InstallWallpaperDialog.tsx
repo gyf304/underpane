@@ -18,7 +18,6 @@ const NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 type Stage =
   | { kind: "name" }
-  | { kind: "confirm" }
   | { kind: "installing"; progress: ProgressState }
   | { kind: "done" }
   | { kind: "error"; message: string };
@@ -180,25 +179,9 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
             {nameError && <p className="text-sm text-destructive">{nameError}</p>}
             <DialogFooter>
               <Button variant="outline" onClick={handleClose}>Cancel</Button>
-              <Button onClick={() => setStage({ kind: "confirm" })} disabled={!!nameError}>
-                Continue
+              <Button onClick={beginInstall} disabled={!!nameError}>
+                Install
               </Button>
-            </DialogFooter>
-          </div>
-        )}
-
-        {stage.kind === "confirm" && (
-          <div className="space-y-3">
-            <p className="text-sm">Install to folder:</p>
-            <p className="text-sm font-mono break-all rounded-md border bg-muted px-2 py-1">
-              {name}
-            </p>
-            <p className="text-xs text-muted-foreground break-all">
-              Download URL: {zipUrl}
-            </p>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setStage({ kind: "name" })}>Back</Button>
-              <Button onClick={beginInstall}>Install</Button>
             </DialogFooter>
           </div>
         )}
