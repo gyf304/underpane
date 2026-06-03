@@ -40,7 +40,7 @@ runs:
         [[ -d "$DIST_DIR" ]]   || { echo "dist-dir not found: $DIST_DIR" >&2; exit 1; }
         [[ -f "$INDEX_TOML" ]] || { echo "index-toml not found: $INDEX_TOML" >&2; exit 1; }
         name="${INPUT_NAME:-${GITHUB_REPOSITORY##*/}}"
-        asset="${RUNNER_TEMP}/${name}_${version}.zip"
+        asset="${RUNNER_TEMP}/${name}_${version}.underpane.zip"
         staging="$(mktemp -d)"
         cp -R "$DIST_DIR"/. "$staging"/
         cp "$INDEX_TOML" "$staging/index.toml"
