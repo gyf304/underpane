@@ -1,8 +1,8 @@
 [package]
 name = "underpane"
-version = "0.1.4"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.1.5"
+description = "Underpane"
+authors = ["Yifan Gu"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
