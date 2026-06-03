@@ -1,5 +1,6 @@
 use crate::config::{Config, WallpaperConfig, CONFIG, CONFIG_PATH};
 use crate::desktop_windows::calc_desktop_visibility;
+use crate::install;
 use crate::monitor_info::{current_monitors, MonitorInfo};
 use crate::wallpapers::WallpaperManifest;
 use serde::Serialize;
@@ -110,6 +111,24 @@ pub fn get_config(window: Window) -> Result<WallpaperConfig, String> {
         .get_monitor_config(index)
         .ok_or_else(|| "no config for monitor".to_string())?;
     Ok(monitor_config.config.clone())
+}
+
+#[tauri::command]
+pub fn take_pending_install_url(window: Window) -> Result<Option<String>, String> {
+    require_config_window(&window)?;
+    Ok(crate::PENDING_INSTALL_URL.lock().ok().and_then(|mut s| s.take()))
+}
+
+#[tauri::command]
+pub async fn install_wallpaper(
+    app: AppHandle,
+    window: Window,
+    name: String,
+    zip_url: String,
+    install_id: String,
+) -> Result<(), String> {
+    require_config_window(&window)?;
+    install::install_wallpaper(app, name, zip_url, install_id).await
 }
 
 #[tauri::command]

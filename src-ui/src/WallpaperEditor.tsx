@@ -22,6 +22,9 @@ import {
 } from "./WallpaperEditor.types";
 import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir, getAutostart, setAutostart } from "./WallpaperEditor.api";
 import { Quickstart, type QuickstartStepId } from "./Quickstart";
+import { InstallWallpaperDialog } from "./InstallWallpaperDialog";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
 
 const QUICKSTART_SEEN_KEY = "underpane.quickstartSeen";
@@ -258,6 +261,11 @@ export function WallpaperEditor() {
   const [savedAutostart, setSavedAutostart] = useState<boolean | null>(null);
   const [quickstartOpen, setQuickstartOpen] = useState(false);
   const [quickstartStep, setQuickstartStep] = useState<QuickstartStepId | null>(null);
+  const [installSourceUrl, setInstallSourceUrl] = useState<string | null>(null);
+
+  const refreshWallpapers = useCallback(async () => {
+    setWallpaperMap(await wallpapers());
+  }, []);
 
   const selectMonitor = (id: string) => {
     setSelectedId(id);
@@ -284,6 +292,21 @@ export function WallpaperEditor() {
     if (typeof localStorage !== "undefined" && localStorage.getItem(QUICKSTART_SEEN_KEY) !== "true") {
       setQuickstartOpen(true);
     }
+  }, []);
+
+  // Deep-link install requests. The Rust side both emits an `install-request`
+  // event and caches the URL in PENDING_INSTALL_URL; we drain the cache on
+  // mount to cover cold-start launches where the emit fires before this
+  // listener attaches.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<{ source_url: string }>("install-request", (e) => {
+      setInstallSourceUrl(e.payload.source_url);
+    }).then((u) => { unlisten = u; });
+    invoke<string | null>("take_pending_install_url")
+      .then((url) => { if (url) setInstallSourceUrl(url); })
+      .catch(() => {});
+    return () => { unlisten?.(); };
   }, []);
 
   useEffect(() => {
@@ -642,6 +665,12 @@ export function WallpaperEditor() {
         onOpenChange={handleQuickstartOpenChange}
         onStepChange={handleQuickstartStep}
         canProceed={quickstartCanProceed}
+      />
+
+      <InstallWallpaperDialog
+        sourceUrl={installSourceUrl}
+        onClose={() => setInstallSourceUrl(null)}
+        onInstalled={refreshWallpapers}
       />
     </div>
   );

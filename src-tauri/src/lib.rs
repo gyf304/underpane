@@ -3,6 +3,7 @@ mod config;
 mod cursor_position;
 mod desktop_windows;
 mod handlers;
+mod install;
 mod locale;
 mod monitor_info;
 mod protocol;
@@ -13,12 +14,20 @@ mod window_info;
 
 pub use config::ConfigError;
 use config::CONFIG;
-use tauri::{AppHandle, Listener};
+use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 use crate::app::{APP_HANDLE, APP_HANDLE_LOCK};
 use crate::config::show_config_ui;
 use crate::desktop_windows::{DESKTOP_WINDOWS, sync_desktop_windows};
 use crate::monitor_info::MONITORS;
+
+const DEEP_LINK_SCHEME_PREFIX: &str = "underpane+https:";
+
+/// Holds the most recent deep-link URL that hasn't yet been consumed by the
+/// config UI. The frontend drains this on mount via `take_pending_install_url`
+/// so a cold-start launch doesn't lose its URL to the emit-before-listener race.
+pub static PENDING_INSTALL_URL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 async fn tauri_main(app: &AppHandle) {
     let mut monitors_rx = MONITORS.clone();
@@ -41,9 +50,33 @@ async fn tauri_main(app: &AppHandle) {
     }
 }
 
+fn handle_install_url(app: &AppHandle, url: &str) {
+    if !url.starts_with(DEEP_LINK_SCHEME_PREFIX) {
+        eprintln!("underpane: ignoring deep link with unexpected scheme: {url}");
+        return;
+    }
+    if let Ok(mut slot) = PENDING_INSTALL_URL.lock() {
+        *slot = Some(url.to_string());
+    }
+    show_config_ui(app);
+    let payload = serde_json::json!({ "source_url": url });
+    // If the config window hasn't finished loading yet, the emit will be lost
+    // for that window — the frontend drains PENDING_INSTALL_URL on mount as a backup.
+    let _ = app.emit_to("config", "install-request", payload);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // With the `deep-link` feature, the plugin auto-forwards URL args
+            // into the deep-link plugin's `on_open_url` listeners — no manual
+            // dispatch needed here. Just focus the existing config window.
+            if let Some(window) = app.get_webview_window("config") {
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -62,6 +95,8 @@ pub fn run() {
             handlers::get_autostart,
             handlers::set_autostart,
             handlers::runtime_log,
+            handlers::install_wallpaper,
+            handlers::take_pending_install_url,
         ])
         .register_asynchronous_uri_scheme_protocol(
             "underpane-wallpaper",
@@ -74,6 +109,21 @@ pub fn run() {
         )
         .setup(move |app| {
             APP_HANDLE_LOCK.set(app.handle().clone()).unwrap();
+
+            // Register the deep-link scheme at runtime (no-op on platforms
+            // where the bundler handles it, e.g. macOS via Info.plist).
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            {
+                let _ = app.deep_link().register_all();
+            }
+
+            // Listen for deep-link URL opens and forward into the install flow.
+            let app_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    handle_install_url(&app_handle, url.as_str());
+                }
+            });
 
             app.once("init", |_| {
                 tauri::async_runtime::spawn(tauri_main(&APP_HANDLE));

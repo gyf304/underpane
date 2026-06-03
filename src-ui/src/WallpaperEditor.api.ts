@@ -33,3 +33,17 @@ export async function getAutostart(): Promise<boolean> {
 export async function setAutostart(enabled: boolean): Promise<void> {
   await invoke("set_autostart", { enabled });
 }
+
+// ─── Wallpaper install ────────────────────────────────────────────────────────
+
+export async function installWallpaper(args: {
+  name: string;
+  zipUrl: string;
+  installId: string;
+}): Promise<void> {
+  await invoke("install_wallpaper", {
+    name: args.name,
+    zipUrl: args.zipUrl,
+    installId: args.installId,
+  });
+}
