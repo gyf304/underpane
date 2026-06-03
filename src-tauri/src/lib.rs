@@ -58,11 +58,20 @@ fn handle_install_url(app: &AppHandle, url: &str) {
     if let Ok(mut slot) = PENDING_INSTALL_URL.lock() {
         *slot = Some(url.to_string());
     }
-    show_config_ui(app);
-    let payload = serde_json::json!({ "source_url": url });
-    // If the config window hasn't finished loading yet, the emit will be lost
-    // for that window — the frontend drains PENDING_INSTALL_URL on mount as a backup.
-    let _ = app.emit_to("config", "install-request", payload);
+    // Defer window creation + emit so we don't block the macOS main thread
+    // while the deep-link callback is still on the stack — calling
+    // WebviewWindowBuilder::build() inline from here deadlocks because it
+    // needs the main thread to pump Cocoa events to finish.
+    let app = app.clone();
+    let url = url.to_string();
+    tauri::async_runtime::spawn(async move {
+        show_config_ui(&app);
+        let payload = serde_json::json!({ "source_url": url });
+        // If the config window hasn't finished loading yet, the emit will be
+        // lost for that window — the frontend drains PENDING_INSTALL_URL on
+        // mount as a backup.
+        let _ = app.emit_to("config", "install-request", payload);
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
