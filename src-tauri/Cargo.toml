@@ -1,6 +1,6 @@
 [package]
 name = "underpane"
-version = "0.1.5"
+version = "0.1.6"
 description = "Underpane"
 authors = ["Yifan Gu"]
 edition = "2021"
