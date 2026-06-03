@@ -56,7 +56,7 @@ function deriveDefaultName(sourceUrl: string): string {
     return sanitize(
       filename
         .replace(/\.zip$/i, "")
-        .replace(/[._-]underpane$/i, "")
+        .split("_")[0] ?? ""
     );
   } catch {
     return "wallpaper";
@@ -170,11 +170,12 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
 
         {stage.kind === "name" && (
           <div className="space-y-3">
-            <Label htmlFor="wp-name">Wallpaper name (folder)</Label>
+            <Label htmlFor="wp-name">Install to folder</Label>
             <Input
               id="wp-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              className="font-mono"
             />
             {nameError && <p className="text-sm text-destructive">{nameError}</p>}
             <DialogFooter>
@@ -188,8 +189,9 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
 
         {stage.kind === "confirm" && (
           <div className="space-y-3">
-            <p className="text-sm">
-              Install as wallpaper <b>{name}</b>?
+            <p className="text-sm">Install to folder:</p>
+            <p className="text-sm font-mono break-all rounded-md border bg-muted px-2 py-1">
+              {name}
             </p>
             <p className="text-xs text-muted-foreground break-all">
               Download URL: {zipUrl}

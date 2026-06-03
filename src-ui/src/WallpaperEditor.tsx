@@ -620,7 +620,10 @@ export function WallpaperEditor() {
                     </SelectItem>
                     {Array.from(wallpaperMap.entries()).map(([id, wp]) => (
                       <SelectItem key={id} value={id}>
-                        {wp.name}
+                        <span className="flex items-baseline gap-2">
+                          <span>{wp.name}</span>
+                          <span className="text-xs text-muted-foreground font-mono">({id})</span>
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>
