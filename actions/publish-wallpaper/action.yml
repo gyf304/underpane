@@ -9,6 +9,14 @@ inputs:
     description: Path to the wallpaper manifest (must exist)
     required: false
     default: ./dist/index.toml
+  name:
+    description: Override the asset/release base name (defaults to the repository name)
+    required: false
+    default: ""
+  version:
+    description: Override the version. When set, the action runs regardless of ref type; the release is created/updated with this as its tag.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -16,24 +24,30 @@ runs:
       env:
         DIST_DIR: ${{ inputs.dist-dir }}
         INDEX_TOML: ${{ inputs.index-toml }}
+        INPUT_NAME: ${{ inputs.name }}
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        if [[ "${GITHUB_REF:-}" != refs/tags/* ]]; then
-          echo "Not a tag ref (${GITHUB_REF:-<none>}); skipping publish."
-          exit 0
+        if [[ -n "$INPUT_VERSION" ]]; then
+          version="$INPUT_VERSION"
+        else
+          if [[ "${GITHUB_REF:-}" != refs/tags/* ]]; then
+            echo "Not a tag ref (${GITHUB_REF:-<none>}) and no 'version' input; skipping publish."
+            exit 0
+          fi
+          version="${GITHUB_REF#refs/tags/}"
         fi
         [[ -d "$DIST_DIR" ]]   || { echo "dist-dir not found: $DIST_DIR" >&2; exit 1; }
         [[ -f "$INDEX_TOML" ]] || { echo "index-toml not found: $INDEX_TOML" >&2; exit 1; }
-        tag="${GITHUB_REF#refs/tags/}"
-        repo="${GITHUB_REPOSITORY##*/}"
-        asset="${RUNNER_TEMP}/${repo}_${tag}.zip"
+        name="${INPUT_NAME:-${GITHUB_REPOSITORY##*/}}"
+        asset="${RUNNER_TEMP}/${name}_${version}.zip"
         staging="$(mktemp -d)"
         cp -R "$DIST_DIR"/. "$staging"/
         cp "$INDEX_TOML" "$staging/index.toml"
         (cd "$staging" && zip -r "$asset" .)
-        if gh release view "$tag" >/dev/null 2>&1; then
-          gh release upload "$tag" "$asset" --clobber
+        if gh release view "$version" >/dev/null 2>&1; then
+          gh release upload "$version" "$asset" --clobber
         else
-          gh release create "$tag" "$asset" \
-            --draft --title "$tag" --target "$GITHUB_SHA"
+          gh release create "$version" "$asset" \
+            --draft --title "$version" --target "$GITHUB_SHA"
         fi
