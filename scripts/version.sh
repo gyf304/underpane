@@ -12,6 +12,12 @@ fi
 NEW="$1"
 TAG="v$NEW"
 
+SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+if ! [[ "$NEW" =~ $SEMVER_RE ]]; then
+  echo "error: '$NEW' is not a valid semver" >&2
+  exit 1
+fi
+
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
   echo "error: tag $TAG already exists" >&2
   exit 1
