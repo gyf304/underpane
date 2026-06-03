@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ColorPicker } from "@/components/ui/color-picker";
-import { Settings } from "lucide-react";
+import { Settings, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   type SystemConfig,
@@ -127,6 +127,9 @@ function ConfigFieldRow({
 }) {
   const id = `cfg-${fieldKey}`;
   const placeholder = field.default != null ? String(field.default) : undefined;
+  // An unset value (null/undefined) already resolves to the default, so reverting
+  // simply clears the override. Disable the control when nothing to revert.
+  const isDefault = value == null;
 
   const labelRow = (
     <div className="flex items-center gap-1.5 flex-wrap">
@@ -139,6 +142,16 @@ function ConfigFieldRow({
       <code className="rounded bg-muted px-1.5 py-px font-mono text-[10px] leading-tight text-muted-foreground">
         {fieldKey}
       </code>
+      <button
+        type="button"
+        aria-label="Revert to default"
+        title="Revert to default"
+        disabled={isDefault}
+        onClick={() => onChange(undefined)}
+        className="ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+      >
+        <RotateCcw className="size-3" />
+      </button>
     </div>
   );
 
