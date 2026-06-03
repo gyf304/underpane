@@ -1,0 +1,39 @@
+name: Publish Underpane Wallpaper
+description: Zips a wallpaper dist directory and attaches it to a draft GitHub release named after the tag.
+inputs:
+  dist-dir:
+    description: Directory containing the built wallpaper
+    required: false
+    default: ./dist
+  index-toml:
+    description: Path to the wallpaper manifest (must exist)
+    required: false
+    default: ./dist/index.toml
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DIST_DIR: ${{ inputs.dist-dir }}
+        INDEX_TOML: ${{ inputs.index-toml }}
+      run: |
+        set -euo pipefail
+        if [[ "${GITHUB_REF:-}" != refs/tags/* ]]; then
+          echo "Not a tag ref (${GITHUB_REF:-<none>}); skipping publish."
+          exit 0
+        fi
+        [[ -d "$DIST_DIR" ]]   || { echo "dist-dir not found: $DIST_DIR" >&2; exit 1; }
+        [[ -f "$INDEX_TOML" ]] || { echo "index-toml not found: $INDEX_TOML" >&2; exit 1; }
+        tag="${GITHUB_REF#refs/tags/}"
+        repo="${GITHUB_REPOSITORY##*/}"
+        asset="${RUNNER_TEMP}/${repo}_${tag}.zip"
+        staging="$(mktemp -d)"
+        cp -R "$DIST_DIR"/. "$staging"/
+        cp "$INDEX_TOML" "$staging/index.toml"
+        (cd "$staging" && zip -r "$asset" .)
+        if gh release view "$tag" >/dev/null 2>&1; then
+          gh release upload "$tag" "$asset" --clobber
+        else
+          gh release create "$tag" "$asset" \
+            --draft --title "$tag" --target "$GITHUB_SHA"
+        fi
