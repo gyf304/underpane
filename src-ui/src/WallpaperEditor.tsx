@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ColorPicker } from "@/components/ui/color-picker";
 import { Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -154,6 +155,24 @@ function ConfigFieldRow({
           id={id}
           checked={value != null ? Boolean(value) : Boolean(field.default)}
           onCheckedChange={onChange}
+        />
+      </div>
+    );
+  }
+
+  if (field.type === "color") {
+    return (
+      <div className="space-y-1.5">
+        {labelRow}
+        {field.description && (
+          <p className="text-xs leading-snug text-muted-foreground">{field.description}</p>
+        )}
+        <ColorPicker
+          id={id}
+          value={typeof value === "string" ? value : undefined}
+          defaultValue={field.default}
+          alpha={Boolean(field.alpha)}
+          onChange={onChange}
         />
       </div>
     );

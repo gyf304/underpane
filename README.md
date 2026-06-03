@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/935e5452-5772-4dcb-be23-0fde652abc9b
 Wallpapers live in the app's wallpaper directory (open via tray → Configure). Each wallpaper is a folder containing:
 
 - `index.html` — the wallpaper entry point
-- `index.toml` — name and exposed config schema (bool / string / number)
+- `index.toml` — name and exposed config schema (bool / string / number / color). Color fields store a `#rrggbb[aa]` hex string; add `alpha = true` to the schema entry to enable opacity.
 
 The HTML must be portable: it should run standalone in a plain browser and read its config from `location.hash`.
 

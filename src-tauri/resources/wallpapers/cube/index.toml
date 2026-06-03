@@ -53,3 +53,10 @@ name = "Pause When Hidden"
 group = "Performance"
 description = "Stop animating while the desktop is fully covered by other windows"
 default = false
+
+[config.color]
+type = "color"
+name = "Color"
+group = "Appearance"
+description = "Theme color for the whole scene: recolors the glow, sky, floor and reflections."
+default = "#1c39ff"

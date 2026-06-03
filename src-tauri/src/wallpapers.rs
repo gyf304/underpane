@@ -41,6 +41,16 @@ pub enum WallpaperConfigSchema {
         #[serde(skip_serializing_if = "Option::is_none")]
         step: Option<f64>,
     },
+    Color {
+        name: String,
+        group: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        default: Option<String>,
+        #[serde(default)]
+        alpha: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +113,9 @@ impl WallpaperManifest {
                 WallpaperConfigSchema::Number {
                     default: Some(v), ..
                 } => Some(Scalar::Number(*v)),
+                WallpaperConfigSchema::Color {
+                    default: Some(v), ..
+                } => Some(Scalar::String(v.clone())),
                 _ => None,
             };
             if let Some(v) = value {
@@ -144,5 +157,75 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_deserialize_color_schema() {
+        let toml = r##"
+            name = "My Wallpaper"
+
+            [config.tint]
+            type = "color"
+            name = "Tint"
+            group = "Appearance"
+            default = "#1e1e2e"
+            alpha = true
+        "##;
+
+        let manifest: WallpaperManifest = toml::from_str(toml).unwrap();
+        let schema = manifest.config.get("tint").unwrap();
+        match schema {
+            WallpaperConfigSchema::Color {
+                default,
+                alpha,
+                name,
+                ..
+            } => {
+                assert_eq!(name, "Tint");
+                assert_eq!(default.as_deref(), Some("#1e1e2e"));
+                assert!(*alpha);
+            }
+            _ => panic!("expected Color variant"),
+        }
+    }
+
+    #[test]
+    fn test_color_default_omitted_means_no_alpha() {
+        let toml = r##"
+            name = "My Wallpaper"
+
+            [config.tint]
+            type = "color"
+            name = "Tint"
+            group = "Appearance"
+            default = "#ff00aa"
+        "##;
+
+        let manifest: WallpaperManifest = toml::from_str(toml).unwrap();
+        let schema = manifest.config.get("tint").unwrap();
+        assert!(matches!(
+            schema,
+            WallpaperConfigSchema::Color { alpha: false, .. }
+        ));
+    }
+
+    #[test]
+    fn test_color_default_applied_to_config() {
+        let toml = r##"
+            name = "My Wallpaper"
+
+            [config.tint]
+            type = "color"
+            name = "Tint"
+            group = "Appearance"
+            default = "#1e1e2e"
+        "##;
+
+        let manifest: WallpaperManifest = toml::from_str(toml).unwrap();
+        let cfg = manifest.default_config();
+        assert_eq!(
+            cfg.get("tint"),
+            Some(&Scalar::String("#1e1e2e".to_string()))
+        );
     }
 }

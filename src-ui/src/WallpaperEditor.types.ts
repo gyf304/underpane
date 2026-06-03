@@ -37,10 +37,17 @@ interface WallpaperConfigSchemaNumber extends WallpaperConfigSchemaBase {
   step?: number;
 }
 
+interface WallpaperConfigSchemaColor extends WallpaperConfigSchemaBase {
+  type: "color";
+  default?: string;
+  alpha?: boolean;
+}
+
 export type WallpaperConfigSchema =
   | WallpaperConfigSchemaBool
   | WallpaperConfigSchemaString
-  | WallpaperConfigSchemaNumber;
+  | WallpaperConfigSchemaNumber
+  | WallpaperConfigSchemaColor;
 
 export interface WallpaperManifest {
   name: string;
