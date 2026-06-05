@@ -271,7 +271,9 @@ async fn install_inner(
             filename_filter: None,
             progress_reporter: reporter_box,
         };
-        engine.unzip(opts).map_err(|e| format!("extract failed: {e}"))
+        engine
+            .unzip(opts)
+            .map_err(|e| format!("extract failed: {e}"))
     })
     .await
     .map_err(|e| format!("install task panicked: {e}"))?;

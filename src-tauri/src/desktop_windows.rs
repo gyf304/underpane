@@ -287,7 +287,8 @@ fn wide(s: &str) -> Vec<u16> {
 fn wallpaper_url(index: usize, wallpaper: &str) -> url::Url {
     let i1 = index + 1;
     let mut u = url::Url::parse("underpane-wallpaper://wallpaper").unwrap();
-    u.set_host(Some(&format!("monitor-{i1}.{wallpaper}"))).unwrap();
+    u.set_host(Some(&format!("monitor-{i1}.{wallpaper}")))
+        .unwrap();
     u
 }
 
@@ -436,7 +437,9 @@ impl DesktopWindow {
                     .unwrap_or_else(|| "file".to_string());
                 let encoded = utf8_percent_encode(&filename, PATH_SEGMENT).to_string();
                 let proxy = format!("/.underpane/external-file/{key}/{encoded}");
-                monitor_config.config.insert(key.clone(), Scalar::String(proxy));
+                monitor_config
+                    .config
+                    .insert(key.clone(), Scalar::String(proxy));
             }
         }
 

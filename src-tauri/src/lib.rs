@@ -19,7 +19,7 @@ use tauri_plugin_deep_link::DeepLinkExt;
 
 use crate::app::{APP_HANDLE, APP_HANDLE_LOCK};
 use crate::config::show_config_ui;
-use crate::desktop_windows::{DESKTOP_WINDOWS, sync_desktop_windows};
+use crate::desktop_windows::{sync_desktop_windows, DESKTOP_WINDOWS};
 use crate::monitor_info::MONITORS;
 
 const DEEP_LINK_SCHEME_PREFIX: &str = "underpane+https:";
@@ -34,7 +34,10 @@ async fn tauri_main(app: &AppHandle) {
     let mut config_rx = CONFIG.clone();
     tray::init();
     let _ = sync_desktop_windows();
-    if DESKTOP_WINDOWS.lock().is_ok_and(|v| v.iter().all(|w| w.is_none())) {
+    if DESKTOP_WINDOWS
+        .lock()
+        .is_ok_and(|v| v.iter().all(|w| w.is_none()))
+    {
         show_config_ui(app);
     }
 

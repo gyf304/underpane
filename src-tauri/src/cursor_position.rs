@@ -14,16 +14,17 @@ use std::sync::LazyLock;
 use tauri::PhysicalPosition;
 use tokio::sync::watch;
 
-pub static CURSOR_POSITION: LazyLock<watch::Receiver<PhysicalPosition<f64>>> = LazyLock::new(|| {
-    let (tx, rx) = watch::channel(PhysicalPosition { x: 0.0, y: 0.0 });
+pub static CURSOR_POSITION: LazyLock<watch::Receiver<PhysicalPosition<f64>>> =
+    LazyLock::new(|| {
+        let (tx, rx) = watch::channel(PhysicalPosition { x: 0.0, y: 0.0 });
 
-    #[cfg(target_os = "macos")]
-    init_macos(tx);
-    #[cfg(not(target_os = "macos"))]
-    init_polling_fallback(tx);
+        #[cfg(target_os = "macos")]
+        init_macos(tx);
+        #[cfg(not(target_os = "macos"))]
+        init_polling_fallback(tx);
 
-    rx
-});
+        rx
+    });
 
 fn publish(tx: &watch::Sender<PhysicalPosition<f64>>, pos: PhysicalPosition<f64>) {
     tx.send_if_modified(|cur| {
