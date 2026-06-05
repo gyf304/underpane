@@ -106,6 +106,7 @@ pub fn run() {
             handlers::runtime_log,
             handlers::install_wallpaper,
             handlers::take_pending_install_url,
+            handlers::pick_file,
         ])
         .register_asynchronous_uri_scheme_protocol(
             "underpane-wallpaper",

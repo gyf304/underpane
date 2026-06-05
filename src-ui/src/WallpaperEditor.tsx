@@ -21,7 +21,7 @@ import {
   type WallpaperConfigSchema,
   type SaveStatus,
 } from "./WallpaperEditor.types";
-import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir, getAutostart, setAutostart } from "./WallpaperEditor.api";
+import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir, getAutostart, setAutostart, pickFile } from "./WallpaperEditor.api";
 import { Quickstart, type QuickstartStepId } from "./Quickstart";
 import { InstallWallpaperDialog } from "./InstallWallpaperDialog";
 import { listen } from "@tauri-apps/api/event";
@@ -126,7 +126,7 @@ function ConfigFieldRow({
   onChange: (v: unknown) => void;
 }) {
   const id = `cfg-${fieldKey}`;
-  const placeholder = field.default != null ? String(field.default) : undefined;
+  const placeholder = "default" in field && field.default != null ? String(field.default) : undefined;
   // An unset value (null/undefined) already resolves to the default, so reverting
   // simply clears the override. Disable the control when nothing to revert.
   const isDefault = value == null;
@@ -187,6 +187,39 @@ function ConfigFieldRow({
           alpha={Boolean(field.alpha)}
           onChange={onChange}
         />
+      </div>
+    );
+  }
+
+  if (field.type === "file") {
+    const path = typeof value === "string" ? value : "";
+    const basename = path ? path.split(/[/\\]/).pop() || path : "";
+    return (
+      <div className="space-y-1.5">
+        {labelRow}
+        {field.description && (
+          <p className="text-xs leading-snug text-muted-foreground">{field.description}</p>
+        )}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0"
+            onClick={async () => {
+              const picked = await pickFile(field.extensions);
+              if (picked) onChange(picked);
+            }}
+          >
+            {t("editor.chooseFile")}
+          </Button>
+          <span
+            className="truncate font-mono text-xs text-muted-foreground"
+            title={path || undefined}
+          >
+            {basename || t("editor.noFileChosen")}
+          </span>
+        </div>
       </div>
     );
   }

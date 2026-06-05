@@ -1,5 +1,5 @@
-use crate::config::{Config, WallpaperConfig, CONFIG, CONFIG_PATH};
-use crate::desktop_windows::calc_desktop_visibility;
+use crate::config::{is_valid_wallpaper_id, Config, WallpaperConfig, CONFIG, CONFIG_PATH};
+use crate::desktop_windows::{calc_desktop_visibility, DESKTOP_WINDOWS};
 use crate::install;
 use crate::monitor_info::{current_monitors, MonitorInfo};
 use crate::wallpapers::WallpaperManifest;
@@ -7,6 +7,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use tauri::{AppHandle, Webview, Window};
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 fn require_config_window(window: &Window) -> Result<(), String> {
@@ -106,11 +107,18 @@ pub fn set_autostart(app: AppHandle, window: Window, enabled: bool) -> Result<()
 #[tauri::command]
 pub fn get_config(window: Window) -> Result<WallpaperConfig, String> {
     let index = monitor_index_from_label(&window)?;
-    let cfg = CONFIG.borrow();
-    let monitor_config = cfg
-        .get_monitor_config(index)
+    // Reuse DesktopWindow::monitor_config so the initial load goes through the
+    // same manifest-default merge and `file`-input proxy-path rewrite as the
+    // `config-change` event.
+    let windows = DESKTOP_WINDOWS.lock().map_err(|e| e.to_string())?;
+    let desktop_window = windows
+        .get(index)
+        .and_then(|w| w.as_ref())
+        .ok_or_else(|| "no window for monitor".to_string())?;
+    let monitor_config = desktop_window
+        .monitor_config()
         .ok_or_else(|| "no config for monitor".to_string())?;
-    Ok(monitor_config.config.clone())
+    Ok(monitor_config.config)
 }
 
 #[tauri::command]
@@ -128,7 +136,38 @@ pub async fn install_wallpaper(
     install_id: String,
 ) -> Result<(), String> {
     require_config_window(&window)?;
+    if !is_valid_wallpaper_id(&name) {
+        return Err(format!(
+            "invalid wallpaper name '{name}' (allowed: lowercase letters, digits, '-'; cannot start or end with '-')"
+        ));
+    }
     install::install_wallpaper(app, name, zip_url, install_id).await
+}
+
+#[tauri::command]
+pub async fn pick_file(
+    app: AppHandle,
+    window: Window,
+    extensions: Option<Vec<String>>,
+) -> Result<Option<String>, String> {
+    require_config_window(&window)?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut builder = app.dialog().file();
+    if let Some(exts) = &extensions {
+        if !exts.is_empty() {
+            let refs: Vec<&str> = exts.iter().map(|s| s.as_str()).collect();
+            builder = builder.add_filter("", &refs);
+        }
+    }
+    builder.pick_file(move |path| {
+        let _ = tx.send(path);
+    });
+
+    let picked = rx.await.map_err(|e| e.to_string())?;
+    Ok(picked
+        .and_then(|fp| fp.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]

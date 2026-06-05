@@ -13,6 +13,8 @@ const messages: Record<string, string> = {
   "editor.wallpaper": "Wallpaper",
   "editor.none": "None",
   "editor.noFields": "No configurable fields.",
+  "editor.chooseFile": "Choose file…",
+  "editor.noFileChosen": "No file chosen",
 
   "general.wallpapersDir.label": "Wallpapers directory",
   "general.wallpapersDir.desc": "Filesystem path where wallpapers are loaded from.",

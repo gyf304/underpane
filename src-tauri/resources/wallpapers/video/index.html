@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Video</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    object-position: center;
+  }
+  video.fill { object-fit: cover; }
+  .placeholder {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #aaa;
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    text-align: center;
+    padding: 2rem;
+  }
+  .placeholder p { max-width: 28rem; }
+</style>
+</head>
+<body>
+<video id="v" playsinline autoplay muted></video>
+<div id="placeholder" class="placeholder" hidden>
+  <p>No video selected. Open the wallpaper settings and choose a video file to play as your background.</p>
+</div>
+<script>
+const video = document.getElementById('v');
+const placeholder = document.getElementById('placeholder');
+
+function readHashString(key) {
+  return new URLSearchParams(location.hash.slice(1)).get(key) ?? '';
+}
+function readHashBool(key, fallback) {
+  const v = new URLSearchParams(location.hash.slice(1)).get(key);
+  if (v === null) return fallback;
+  return v === 'true' || v === '1';
+}
+function readHashFloat(key, fallback) {
+  const v = parseFloat(new URLSearchParams(location.hash.slice(1)).get(key));
+  return Number.isFinite(v) ? v : fallback;
+}
+
+let source = readHashString('source');
+let fillScreen = readHashBool('fill_screen', true);
+let muted = readHashBool('muted', true);
+let loop = readHashBool('loop', true);
+let playbackRate = readHashFloat('playback_rate', 1.0);
+let pauseWhenHidden = readHashBool('pause_when_hidden', true);
+
+function applySource() {
+  if (!source) {
+    video.removeAttribute('src');
+    video.load();
+    placeholder.hidden = false;
+    return;
+  }
+  placeholder.hidden = true;
+  if (video.src !== new URL(source, location.href).href) {
+    video.src = source;
+    video.load();
+  }
+}
+
+function applyFill() {
+  video.classList.toggle('fill', fillScreen);
+}
+
+function applyAttrs() {
+  video.muted = muted;
+  video.loop = loop;
+  if (Math.abs(video.playbackRate - playbackRate) > 1e-3) {
+    video.playbackRate = playbackRate;
+  }
+}
+
+function applyVisibility() {
+  if (!source) return;
+  const hidden = document.visibilityState === 'hidden';
+  if (pauseWhenHidden) {
+    if (hidden && !video.paused) video.pause();
+    else if (!hidden && video.paused) video.play().catch(() => {});
+  }
+}
+
+applySource();
+applyFill();
+applyAttrs();
+applyVisibility();
+
+video.addEventListener('canplay', () => {
+  if (document.visibilityState !== 'hidden' || !pauseWhenHidden) {
+    video.play().catch(() => {});
+  }
+});
+video.addEventListener('error', () => {
+  if (!source) return;
+  placeholder.hidden = false;
+  placeholder.textContent = 'Failed to load the selected video. The file may be missing, in an unsupported format, or the codec is not available in this build.';
+});
+
+window.addEventListener('hashchange', () => {
+  const prevSource = source;
+  source = readHashString('source');
+  fillScreen = readHashBool('fill_screen', true);
+  muted = readHashBool('muted', true);
+  loop = readHashBool('loop', true);
+  playbackRate = readHashFloat('playback_rate', 1.0);
+  pauseWhenHidden = readHashBool('pause_when_hidden', true);
+
+  if (source !== prevSource) applySource();
+  applyFill();
+  applyAttrs();
+  applyVisibility();
+});
+
+document.addEventListener('visibilitychange', applyVisibility);
+</script>
+</body>
+</html>

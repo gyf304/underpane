@@ -14,7 +14,9 @@ import { Label } from "@/components/ui/label";
 import { installWallpaper } from "./WallpaperEditor.api";
 
 const UNDERPANE_HTTPS_PREFIX = "underpane+https://";
-const NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+// Mirrors `is_valid_wallpaper_id` in src-tauri/src/config.rs: must be a valid
+// hostname fragment used in the custom protocol host.
+const NAME_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 type Stage =
   | { kind: "name" }
@@ -45,18 +47,19 @@ function innerUrl(sourceUrl: string): string {
 }
 
 function sanitize(s: string): string {
-  return s.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 64) || "wallpaper";
+  return (
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "wallpaper"
+  );
 }
 
 function deriveDefaultName(sourceUrl: string): string {
   try {
     const u = new URL(innerUrl(sourceUrl));
     const filename = u.pathname.split("/").filter(Boolean).pop() ?? "wallpaper";
-    return sanitize(
-      filename
-        .replace(/\.zip$/i, "")
-        .split("_")[0] ?? ""
-    );
+    return sanitize(filename.replace(/\.zip$/i, ""));
   } catch {
     return "wallpaper";
   }
@@ -103,7 +106,9 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
 
   const nameError = useMemo(() => {
     if (!name) return "Name required";
-    if (!NAME_RE.test(name)) return "Allowed: letters, digits, . _ -  (max 64)";
+    if (!NAME_RE.test(name)) {
+      return "Allowed: lowercase letters, digits, '-' (cannot start or end with '-')";
+    }
     return null;
   }, [name]);
 

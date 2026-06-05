@@ -13,6 +13,8 @@ const messages: Record<string, string> = {
   "editor.wallpaper": "壁纸",
   "editor.none": "无",
   "editor.noFields": "没有可配置的字段。",
+  "editor.chooseFile": "选择文件…",
+  "editor.noFileChosen": "未选择文件",
 
   "general.wallpapersDir.label": "壁纸目录",
   "general.wallpapersDir.desc": "从该文件系统路径加载壁纸。",

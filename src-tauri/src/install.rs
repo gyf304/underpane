@@ -7,10 +7,9 @@ use std::time::Instant;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::config::CONFIG;
+use crate::config::{is_valid_wallpaper_id, CONFIG};
 use crate::wallpapers::WallpaperManifest;
 
-const NAME_RE: &str = r"^[A-Za-z0-9._-]{1,64}$";
 const MAX_COMPRESSED_BYTES: u64 = 100 * 1024 * 1024;
 const EMIT_BYTES_THRESHOLD: u64 = 256 * 1024;
 const EMIT_MS_THRESHOLD: u128 = 100;
@@ -35,16 +34,6 @@ pub enum InstallProgress {
         install_id: String,
         message: String,
     },
-}
-
-fn valid_name(name: &str) -> bool {
-    // Minimal regex avoidance — hand-roll the check.
-    if name.is_empty() || name.len() > 64 {
-        return false;
-    }
-    let _ = NAME_RE; // silence dead-code-like lint; documented above
-    name.bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 fn emit_progress(app: &AppHandle, payload: &InstallProgress) {
@@ -240,9 +229,9 @@ async fn install_inner(
     zip_url: String,
     install_id: String,
 ) -> Result<(), String> {
-    if !valid_name(&name) {
+    if !is_valid_wallpaper_id(&name) {
         return Err(format!(
-            "invalid wallpaper name '{name}' (allowed: [A-Za-z0-9._-], 1-64 chars)"
+            "invalid wallpaper name '{name}' (allowed: lowercase letters, digits, '-'; cannot start or end with '-')"
         ));
     }
     if !zip_url.starts_with("https://") {

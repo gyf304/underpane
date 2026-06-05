@@ -34,6 +34,10 @@ export async function setAutostart(enabled: boolean): Promise<void> {
   await invoke("set_autostart", { enabled });
 }
 
+export async function pickFile(extensions?: string[]): Promise<string | null> {
+  return invoke("pick_file", { extensions });
+}
+
 // ─── Wallpaper install ────────────────────────────────────────────────────────
 
 export async function installWallpaper(args: {

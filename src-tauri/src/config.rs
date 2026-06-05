@@ -103,7 +103,7 @@ impl Default for Config {
     }
 }
 
-fn expand_tilde(raw: &str) -> PathBuf {
+pub(crate) fn expand_tilde(raw: &str) -> PathBuf {
     if let Some(rest) = raw.strip_prefix("~/") {
         directories::BaseDirs::new()
             .map(|b| b.home_dir().join(rest))
@@ -153,6 +153,7 @@ impl Config {
     /// Scans the wallpapers directory and loads each subdirectory's `manifest.toml`.
     /// Returns a map from wallpaper directory name to its manifest.
     /// Subdirectories that are missing a manifest or have an unparseable one are silently skipped.
+    /// Directory names that aren't valid wallpaper ids (see `is_valid_wallpaper_id`) are skipped.
     pub fn wallpapers(&self) -> Result<BTreeMap<String, WallpaperManifest>, ConfigError> {
         let mut map = BTreeMap::new();
 
@@ -167,6 +168,9 @@ impl Config {
                     continue;
                 }
                 let name = entry.file_name().to_string_lossy().into_owned();
+                if !is_valid_wallpaper_id(&name) {
+                    continue;
+                }
                 if map.contains_key(&name) {
                     continue;
                 }
@@ -232,6 +236,21 @@ impl From<notify::Error> for ConfigError {
     }
 }
 
+/// Whether `name` is usable as a wallpaper id. Wallpaper ids end up in URLs
+/// (the custom protocol host is `monitor-{n}.{wallpaper}`), so they must be
+/// valid hostnames: lowercase letters, digits, and hyphens, with no leading
+/// or trailing hyphen and at least one character.
+pub fn is_valid_wallpaper_id(name: &str) -> bool {
+    if name.is_empty() || name.len() >= 64 {
+        return false;
+    }
+    if name.starts_with('-') || name.ends_with('-') {
+        return false;
+    }
+    name.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 pub fn show_config_ui(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("config") {
         let _ = window.set_focus();
@@ -245,5 +264,40 @@ pub fn show_config_ui(app: &AppHandle) {
         .inner_size(800.0, 600.0)
         .maximizable(false)
         .build();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_wallpaper_id;
+
+    #[test]
+    fn valid_wallpaper_ids() {
+        for name in ["cube", "video", "synthwave-canyon", "a1b2", "a-b-c-9"] {
+            assert!(is_valid_wallpaper_id(name), "expected valid: {name}");
+        }
+    }
+
+    #[test]
+    fn rejects_empty_and_boundary_hyphens() {
+        for name in ["", "-", "-foo", "foo-", "-foo-"] {
+            assert!(!is_valid_wallpaper_id(name), "expected invalid: {name:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_disallowed_characters() {
+        for name in [
+            "Foo",
+            "FOO",
+            "foo_bar",
+            "foo bar",
+            "foo.bar",
+            "foo/bar",
+            "foo!",
+            "ünïcödé",
+        ] {
+            assert!(!is_valid_wallpaper_id(name), "expected invalid: {name:?}");
+        }
     }
 }

@@ -1,3 +1,4 @@
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde::Serialize;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -8,15 +9,31 @@ use tauri::Manager;
 use tauri::{LogicalPosition, LogicalRect, LogicalSize};
 
 use crate::app::APP_HANDLE;
-use crate::config::{MonitorConfig, CONFIG};
+use crate::config::{MonitorConfig, Scalar, CONFIG};
 use crate::cursor_position::CURSOR_POSITION;
 use crate::monitor_info::MONITORS;
 use crate::utils::Tracker;
-use crate::wallpapers::WallpaperManifest;
+use crate::wallpapers::{WallpaperConfigSchema, WallpaperManifest};
 use crate::window_info::WINDOWS;
 use crate::window_info::{coverage, filter_windows};
 
 const RUNTIME_JS: &str = include_str!("runtime.js");
+
+/// Characters to percent-encode within a single URL path segment (the file name
+/// of a `file` input). Encodes controls, space, and characters that would
+/// otherwise be interpreted as delimiters.
+const PATH_SEGMENT: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'/')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}');
 
 pub static DESKTOP_WINDOWS: LazyLock<Mutex<Vec<Option<DesktopWindow>>>> =
     LazyLock::new(|| Mutex::new(vec![]));
@@ -267,19 +284,26 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-fn wallpaper_url(wallpaper: &str) -> url::Url {
+fn wallpaper_url(index: usize, wallpaper: &str) -> url::Url {
+    let i1 = index + 1;
     let mut u = url::Url::parse("underpane-wallpaper://wallpaper").unwrap();
-    u.set_host(Some(wallpaper)).unwrap();
+    u.set_host(Some(&format!("monitor-{i1}.{wallpaper}"))).unwrap();
     u
 }
 
-fn wallpaper_navigate_url(wallpaper: &str) -> url::Url {
+fn wallpaper_navigate_url(index: usize, wallpaper: &str) -> url::Url {
     #[cfg(windows)]
-    // wry's custom-protocol workaround for WebView2: maps custom-scheme://host -> http://custom-scheme.host
-    return url::Url::parse(&format!("http://underpane-wallpaper.{wallpaper}")).unwrap();
+    {
+        let i1 = index + 1;
+        // wry's custom-protocol workaround for WebView2: maps custom-scheme://host -> http://custom-scheme.host
+        return url::Url::parse(&format!(
+            "http://underpane-wallpaper.monitor-{i1}.{wallpaper}"
+        ))
+        .unwrap();
+    }
 
     #[cfg(not(windows))]
-    return wallpaper_url(wallpaper);
+    return wallpaper_url(index, wallpaper);
 }
 
 fn logical_monitor_rect(index: usize) -> Option<LogicalRect<f64, f64>> {
@@ -341,7 +365,7 @@ impl DesktopWindow {
             tauri::WebviewWindowBuilder::new(
                 app,
                 &label,
-                tauri::WebviewUrl::CustomProtocol(wallpaper_url(&monitor_config.wallpaper)),
+                tauri::WebviewUrl::CustomProtocol(wallpaper_url(index, &monitor_config.wallpaper)),
             )
             .title("underpane")
             .transparent(true)
@@ -390,6 +414,30 @@ impl DesktopWindow {
             for (key, value) in manifest.default_config() {
                 monitor_config.config.entry(key).or_insert(value);
             }
+
+            // Rewrite `file` inputs from their on-disk path to a domain-relative
+            // proxy path. The wallpaper page is served from the
+            // `underpane-wallpaper://monitor-{n}.{wallpaper}` origin, so this
+            // relative path resolves against it and the protocol handler maps it
+            // back to the file on disk.
+            for (key, schema) in &manifest.config {
+                if !matches!(schema, WallpaperConfigSchema::File { .. }) {
+                    continue;
+                }
+                let Some(Scalar::String(path)) = monitor_config.config.get(key) else {
+                    continue;
+                };
+                if path.is_empty() {
+                    continue;
+                }
+                let filename = std::path::Path::new(path)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "file".to_string());
+                let encoded = utf8_percent_encode(&filename, PATH_SEGMENT).to_string();
+                let proxy = format!("/.underpane/external-file/{key}/{encoded}");
+                monitor_config.config.insert(key.clone(), Scalar::String(proxy));
+            }
         }
 
         Some(monitor_config)
@@ -426,7 +474,7 @@ impl DesktopWindow {
                         continue
                     };
                     if tracked_wallpaper.update(monitor_config.wallpaper.clone()) {
-                        let _ = self.window.navigate(wallpaper_navigate_url(tracked_wallpaper.get()));
+                        let _ = self.window.navigate(wallpaper_navigate_url(self.index, tracked_wallpaper.get()));
                     }
                     let _ = self.emit(
                         "config-change",

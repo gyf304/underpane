@@ -1,6 +1,13 @@
-use crate::config::CONFIG;
+use crate::config::{expand_tilde, Scalar, CONFIG};
+use crate::wallpapers::{WallpaperConfigSchema, WallpaperManifest};
+use std::path::PathBuf;
 
 const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
+/// Higher full-read cap for user-chosen external `file` inputs (images/video),
+/// which are commonly larger than bundled assets. Range requests still stream
+/// in `MAX_RESPONSE_BYTES`-sized chunks regardless of this cap.
+const MAX_EXTERNAL_RESPONSE_BYTES: u64 = 64 * 1024 * 1024;
+const EXTERNAL_FILE_PREFIX: &str = ".underpane/external-file/";
 const CSP: &str = "default-src 'self' 'unsafe-inline' ipc: http://ipc.localhost";
 
 pub async fn handle(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
@@ -21,7 +28,24 @@ fn not_found() -> tauri::http::Response<Vec<u8>> {
 
 async fn handle_inner(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
     let uri = request.uri();
-    let wallpaper = uri.host().unwrap();
+    // The host is keyed by both monitor and wallpaper as `monitor-{n}.{wallpaper}`.
+    // Strip the `monitor-{n}.` prefix; the remainder is the wallpaper id.
+    let host = uri.host().unwrap();
+    let Some((monitor_part, wallpaper)) = host.split_once('.') else {
+        return not_found();
+    };
+    // `monitor-{n}` is 1-based; convert to a 0-based monitor index.
+    let Some(index) = monitor_part
+        .strip_prefix("monitor-")
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .map(|n| n - 1)
+    else {
+        return not_found();
+    };
+    if wallpaper.is_empty() {
+        return not_found();
+    }
     let mut path = uri.path().trim_matches('/').to_string();
     if path.is_empty() {
         path = "index.html".to_string();
@@ -38,22 +62,87 @@ async fn handle_inner(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Re
         }
     }
 
-    let dirs = CONFIG.borrow().get_wallpaper_dirs();
-    let mut resolved: Option<(std::path::PathBuf, std::fs::Metadata)> = None;
-    for base in &dirs {
-        let candidate = base.join(wallpaper).join(&path);
-        if let Ok(m) = tokio::fs::metadata(&candidate).await {
-            resolved = Some((candidate, m));
-            break;
-        }
-    }
+    let (resolved, max_bytes) = if let Some(rest) = path.strip_prefix(EXTERNAL_FILE_PREFIX) {
+        (
+            resolve_external_file(index, wallpaper, rest).await,
+            MAX_EXTERNAL_RESPONSE_BYTES,
+        )
+    } else {
+        (
+            resolve_wallpaper_file(wallpaper, &path).await,
+            MAX_RESPONSE_BYTES,
+        )
+    };
     let Some((full_path, metadata)) = resolved else {
         return not_found();
     };
+    serve_file(&request, &full_path, &metadata, max_bytes).await
+}
+
+/// Resolves a normal asset path within the wallpaper's directory, searching the
+/// configured wallpaper directories in order.
+async fn resolve_wallpaper_file(
+    wallpaper: &str,
+    path: &str,
+) -> Option<(PathBuf, std::fs::Metadata)> {
+    let dirs = CONFIG.borrow().get_wallpaper_dirs();
+    for base in &dirs {
+        let candidate = base.join(wallpaper).join(path);
+        if let Ok(m) = tokio::fs::metadata(&candidate).await {
+            return Some((candidate, m));
+        }
+    }
+    None
+}
+
+/// Resolves a virtual `.underpane/external-file/{input-id}/{filename}` path to
+/// the on-disk file selected for that `file` input on the given monitor. Only
+/// inputs declared as `file` in the wallpaper manifest are served, and the disk
+/// path comes from config (never from the URL), so the URL can't traverse the
+/// filesystem.
+async fn resolve_external_file(
+    index: usize,
+    wallpaper: &str,
+    rest: &str,
+) -> Option<(PathBuf, std::fs::Metadata)> {
+    let input_id = rest.split('/').next().filter(|s| !s.is_empty())?;
+
+    let manifest = WallpaperManifest::get(wallpaper).ok()?;
+    if !matches!(
+        manifest.config.get(input_id),
+        Some(WallpaperConfigSchema::File { .. })
+    ) {
+        return None;
+    }
+
+    // Clone the stored path out before any `.await` so the CONFIG borrow guard
+    // isn't held across an await point.
+    let disk_path = {
+        let cfg = CONFIG.borrow();
+        let monitor_config = cfg.get_monitor_config(index)?;
+        match monitor_config.config.get(input_id) {
+            Some(Scalar::String(s)) if !s.is_empty() => expand_tilde(s),
+            _ => return None,
+        }
+    };
+
+    let metadata = tokio::fs::metadata(&disk_path).await.ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    Some((disk_path, metadata))
+}
+
+async fn serve_file(
+    request: &tauri::http::Request<Vec<u8>>,
+    full_path: &PathBuf,
+    metadata: &std::fs::Metadata,
+    max_bytes: u64,
+) -> tauri::http::Response<Vec<u8>> {
     let file_size = metadata.len();
     let mime = mime_guess::from_path(&full_path).first_or_octet_stream();
 
-    if file_size > MAX_RESPONSE_BYTES {
+    if file_size > max_bytes {
         return tauri::http::Response::builder()
             .status(413)
             .header("Accept-Ranges", "bytes")
