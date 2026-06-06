@@ -112,7 +112,7 @@ pub fn run() {
             handlers::pick_file,
         ])
         .register_asynchronous_uri_scheme_protocol(
-            "underpane-wallpaper",
+            "underpane",
             |_ctx, request, responder| {
                 tauri::async_runtime::spawn(async move {
                     let resp = protocol::handle(request).await;

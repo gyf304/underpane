@@ -1,5 +1,7 @@
 use crate::config::{expand_tilde, Scalar, CONFIG};
+use crate::desktop_windows::realm_origin;
 use crate::wallpapers::{WallpaperConfigSchema, WallpaperManifest};
+use percent_encoding::percent_decode_str;
 use std::path::PathBuf;
 
 const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
@@ -7,14 +9,86 @@ const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
 /// which are commonly larger than bundled assets. Range requests still stream
 /// in `MAX_RESPONSE_BYTES`-sized chunks regardless of this cap.
 const MAX_EXTERNAL_RESPONSE_BYTES: u64 = 64 * 1024 * 1024;
-const EXTERNAL_FILE_PREFIX: &str = ".underpane/external-file/";
 const CSP: &str = "default-src 'self' 'unsafe-inline' ipc: http://ipc.localhost";
 
+/// A parsed `underpane://` host of the form `monitor-{i1}.{id}.{realm}` (with an
+/// optional leading `underpane` scheme segment on Windows). Anchoring on the
+/// numeric `monitor-{n}` segment makes the dot-free `id`/`realm` segments and the
+/// Windows prefix parse unambiguously.
+struct Target {
+    realm: String,
+    index: usize,
+    id: String,
+}
+
+fn parse_host(host: &str) -> Option<Target> {
+    let parts: Vec<&str> = host.split('.').collect();
+    // Locate the `monitor-{n}` segment (1-based, n >= 1).
+    let p = parts.iter().position(|s| {
+        s.strip_prefix("monitor-")
+            .and_then(|n| n.parse::<usize>().ok())
+            .is_some_and(|n| n > 0)
+    })?;
+    let index = parts[p]
+        .strip_prefix("monitor-")
+        .and_then(|n| n.parse::<usize>().ok())?
+        - 1;
+    let id = parts.get(p + 1).copied().filter(|s| !s.is_empty())?;
+    let realm = parts.get(p + 2).copied().filter(|s| !s.is_empty())?;
+    Some(Target {
+        realm: realm.to_string(),
+        index,
+        id: id.to_string(),
+    })
+}
+
+/// Adds permissive CORS headers so the wallpaper document can load `asset`-realm
+/// files from its sibling origin, including ranged `<video>`/`fetch` requests.
+fn add_cors(response: &mut tauri::http::Response<Vec<u8>>) {
+    let h = response.headers_mut();
+    h.insert("Access-Control-Allow-Origin", "*".parse().unwrap());
+    h.insert(
+        "Access-Control-Allow-Methods",
+        "GET, HEAD, OPTIONS".parse().unwrap(),
+    );
+    h.insert("Access-Control-Allow-Headers", "Range".parse().unwrap());
+    h.insert(
+        "Access-Control-Expose-Headers",
+        "Content-Length, Content-Range, Accept-Ranges, Content-Type"
+            .parse()
+            .unwrap(),
+    );
+}
+
 pub async fn handle(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
-    let mut response = handle_inner(request).await;
-    response
-        .headers_mut()
-        .insert("Content-Security-Policy", CSP.parse().unwrap());
+    let target = request.uri().host().and_then(parse_host);
+
+    // Answer CORS preflights (cross-origin ranged `fetch` from the wallpaper page).
+    if *request.method() == tauri::http::Method::OPTIONS {
+        let mut resp = tauri::http::Response::builder()
+            .status(204)
+            .body(vec![])
+            .unwrap();
+        add_cors(&mut resp);
+        return resp;
+    }
+
+    let mut response = handle_inner(&request, target.as_ref()).await;
+
+    match target.as_ref().map(|t| t.realm.as_str()) {
+        // The wallpaper document loads its `file` inputs from the sibling `asset`
+        // origin, so its CSP must allow that origin in addition to `'self'`.
+        Some("wallpaper") => {
+            let t = target.as_ref().unwrap();
+            let asset = realm_origin("asset", t.index, &t.id);
+            let csp = format!("{CSP} {asset}");
+            response
+                .headers_mut()
+                .insert("Content-Security-Policy", csp.parse().unwrap());
+        }
+        Some("asset") => add_cors(&mut response),
+        _ => {}
+    }
     response
 }
 
@@ -26,30 +100,13 @@ fn not_found() -> tauri::http::Response<Vec<u8>> {
         .unwrap()
 }
 
-async fn handle_inner(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
-    let uri = request.uri();
-    // The host is keyed by both monitor and wallpaper as `monitor-{n}.{wallpaper}`.
-    // Strip the `monitor-{n}.` prefix; the remainder is the wallpaper id.
-    let host = uri.host().unwrap();
-    let Some((monitor_part, wallpaper)) = host.split_once('.') else {
+async fn handle_inner(
+    request: &tauri::http::Request<Vec<u8>>,
+    target: Option<&Target>,
+) -> tauri::http::Response<Vec<u8>> {
+    let Some(target) = target else {
         return not_found();
     };
-    // `monitor-{n}` is 1-based; convert to a 0-based monitor index.
-    let Some(index) = monitor_part
-        .strip_prefix("monitor-")
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|n| *n > 0)
-        .map(|n| n - 1)
-    else {
-        return not_found();
-    };
-    if wallpaper.is_empty() {
-        return not_found();
-    }
-    let mut path = uri.path().trim_matches('/').to_string();
-    if path.is_empty() {
-        path = "index.html".to_string();
-    }
 
     match *request.method() {
         tauri::http::Method::GET | tauri::http::Method::HEAD => {}
@@ -62,21 +119,27 @@ async fn handle_inner(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Re
         }
     }
 
-    let (resolved, max_bytes) = if let Some(rest) = path.strip_prefix(EXTERNAL_FILE_PREFIX) {
-        (
-            resolve_external_file(index, wallpaper, rest).await,
-            MAX_EXTERNAL_RESPONSE_BYTES,
-        )
-    } else {
-        (
-            resolve_wallpaper_file(wallpaper, &path).await,
+    let mut path = request.uri().path().trim_matches('/').to_string();
+    if path.is_empty() {
+        path = "index.html".to_string();
+    }
+
+    let (resolved, max_bytes) = match target.realm.as_str() {
+        "wallpaper" => (
+            resolve_wallpaper_file(&target.id, &path).await,
             MAX_RESPONSE_BYTES,
-        )
+        ),
+        // Bare `{input-id}/{filename}` path within the wallpaper's `asset` realm.
+        "asset" => (
+            resolve_external_file(target.index, &target.id, &path).await,
+            MAX_EXTERNAL_RESPONSE_BYTES,
+        ),
+        _ => return not_found(),
     };
     let Some((full_path, metadata)) = resolved else {
         return not_found();
     };
-    serve_file(&request, &full_path, &metadata, max_bytes).await
+    serve_file(request, &full_path, &metadata, max_bytes).await
 }
 
 /// Resolves a normal asset path within the wallpaper's directory, searching the
@@ -95,17 +158,19 @@ async fn resolve_wallpaper_file(
     None
 }
 
-/// Resolves a virtual `.underpane/external-file/{input-id}/{filename}` path to
-/// the on-disk file selected for that `file` input on the given monitor. Only
-/// inputs declared as `file` in the wallpaper manifest are served, and the disk
-/// path comes from config (never from the URL), so the URL can't traverse the
-/// filesystem.
+/// Resolves an `asset`-realm `{input-id}/{filename}` path to the on-disk file
+/// selected for that `file` input on the given monitor. Only inputs declared as
+/// `file` in the wallpaper manifest are served, and the disk path comes from
+/// config (never from the URL), so the URL can't traverse the filesystem.
 async fn resolve_external_file(
     index: usize,
     wallpaper: &str,
     rest: &str,
 ) -> Option<(PathBuf, std::fs::Metadata)> {
-    let input_id = rest.split('/').next().filter(|s| !s.is_empty())?;
+    let raw = rest.split('/').next().filter(|s| !s.is_empty())?;
+    // The input id is percent-encoded in the URL; decode before matching config keys.
+    let input_id = percent_decode_str(raw).decode_utf8().ok()?;
+    let input_id = input_id.as_ref();
 
     let manifest = WallpaperManifest::get(wallpaper).ok()?;
     if !matches!(

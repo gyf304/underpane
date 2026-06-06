@@ -1,24 +1,41 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Synthwave Canyon</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-  canvas { display: block; width: 100%; height: 100%; }
-</style>
-</head>
-<body>
-<canvas id="c"></canvas>
-<script>
-const canvas = document.getElementById('c');
-const gl = canvas.getContext('webgl2');
-if (!gl) { document.body.innerHTML = '<p style="color:white;padding:2rem">WebGL 2 not supported</p>'; }
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Synthwave Canyon</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                background: #000;
+            }
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="c"></canvas>
+        <script>
+            const canvas = document.getElementById("c");
+            const gl = canvas.getContext("webgl2");
+            if (!gl) {
+                document.body.innerHTML =
+                    '<p style="color:white;padding:2rem">WebGL 2 not supported</p>';
+            }
 
-// Shared fullscreen quad vertex shader. Passes a UV to the fragment shader.
-const VS = `#version 300 es
+            // Shared fullscreen quad vertex shader. Passes a UV to the fragment shader.
+            const VS = `#version 300 es
 in vec2 a_pos;
 out vec2 v_uv;
 void main() {
@@ -27,8 +44,8 @@ void main() {
 }
 `;
 
-// Scene shader - renders the synthwave canyon at half resolution.
-const FS_SCENE = `#version 300 es
+            // Scene shader - renders the synthwave canyon at half resolution.
+            const FS_SCENE = `#version 300 es
 precision highp float;
 uniform vec3  iResolution;
 uniform float iTime;
@@ -187,15 +204,15 @@ void main() {
 }
 `;
 
-// CAS upscale shader - runs at full resolution, reads from the half-res texture.
-//
-// AMD Contrast Adaptive Sharpening (simplified for WebGL 1.0):
-// Samples the 5-tap cross neighbourhood, computes a local luma min/max,
-// derives a sharpening weight that is strongest in low-contrast regions and
-// falls off where contrast is already high (preventing oversharpening on
-// bright neon edges). The centre pixel is then blended toward the sharpened
-// result. uSharpness=0 is maximum sharpening, uSharpness=1 is a no-op.
-const FS_CAS = `#version 300 es
+            // CAS upscale shader - runs at full resolution, reads from the half-res texture.
+            //
+            // AMD Contrast Adaptive Sharpening (simplified for WebGL 1.0):
+            // Samples the 5-tap cross neighbourhood, computes a local luma min/max,
+            // derives a sharpening weight that is strongest in low-contrast regions and
+            // falls off where contrast is already high (preventing oversharpening on
+            // bright neon edges). The centre pixel is then blended toward the sharpened
+            // result. uSharpness=0 is maximum sharpening, uSharpness=1 is a no-op.
+            const FS_CAS = `#version 300 es
 precision highp float;
 in vec2 v_uv;
 uniform sampler2D uTex;
@@ -237,206 +254,263 @@ void main() {
 }
 `;
 
-// ---- GL helpers ----
-function compileShader(gl, type, src) {
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-    console.error(gl.getShaderInfoLog(s));
-  return s;
-}
+            // ---- GL helpers ----
+            function compileShader(gl, type, src) {
+                const s = gl.createShader(type);
+                gl.shaderSource(s, src);
+                gl.compileShader(s);
+                if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+                    console.error(gl.getShaderInfoLog(s));
+                return s;
+            }
 
-function buildProgram(gl, fsSrc) {
-  const vs = compileShader(gl, gl.VERTEX_SHADER, VS);
-  const fs = compileShader(gl, gl.FRAGMENT_SHADER, fsSrc);
-  const p = gl.createProgram();
-  gl.attachShader(p, vs);
-  gl.attachShader(p, fs);
-  gl.linkProgram(p);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS))
-    console.error(gl.getProgramInfoLog(p));
-  return p;
-}
+            function buildProgram(gl, fsSrc) {
+                const vs = compileShader(gl, gl.VERTEX_SHADER, VS);
+                const fs = compileShader(gl, gl.FRAGMENT_SHADER, fsSrc);
+                const p = gl.createProgram();
+                gl.attachShader(p, vs);
+                gl.attachShader(p, fs);
+                gl.linkProgram(p);
+                if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+                    console.error(gl.getProgramInfoLog(p));
+                return p;
+            }
 
-// Shared quad buffer; must re-bind attrib pointer when switching programs.
-const quadBuf = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+            // Shared quad buffer; must re-bind attrib pointer when switching programs.
+            const quadBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+            gl.bufferData(
+                gl.ARRAY_BUFFER,
+                new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+                gl.STATIC_DRAW,
+            );
 
-function bindQuad(prog) {
-  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-  const loc = gl.getAttribLocation(prog, 'a_pos');
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-}
+            function bindQuad(prog) {
+                gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+                const loc = gl.getAttribLocation(prog, "a_pos");
+                gl.enableVertexAttribArray(loc);
+                gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+            }
 
-// ---- programs ----
-const sceneProg = buildProgram(gl, FS_SCENE);
-const casProg   = buildProgram(gl, FS_CAS);
+            // ---- programs ----
+            const sceneProg = buildProgram(gl, FS_SCENE);
+            const casProg = buildProgram(gl, FS_CAS);
 
-// scene uniforms
-const uRes  = gl.getUniformLocation(sceneProg, 'iResolution');
-const uTime = gl.getUniformLocation(sceneProg, 'iTime');
-const uColor = gl.getUniformLocation(sceneProg, 'uColor');
+            // scene uniforms
+            const uRes = gl.getUniformLocation(sceneProg, "iResolution");
+            const uTime = gl.getUniformLocation(sceneProg, "iTime");
+            const uColor = gl.getUniformLocation(sceneProg, "uColor");
 
-// CAS uniforms
-const uTex       = gl.getUniformLocation(casProg, 'uTex');
-const uTexelSize = gl.getUniformLocation(casProg, 'uTexelSize');
-const uSharpness = gl.getUniformLocation(casProg, 'uSharpness');
+            // CAS uniforms
+            const uTex = gl.getUniformLocation(casProg, "uTex");
+            const uTexelSize = gl.getUniformLocation(casProg, "uTexelSize");
+            const uSharpness = gl.getUniformLocation(casProg, "uSharpness");
 
-// ---- half-res FBO ----
-let halfW = 1, halfH = 1, fbo, fbTex;
+            // ---- half-res FBO ----
+            let halfW = 1,
+                halfH = 1,
+                fbo,
+                fbTex;
 
-function createFBO(w, h) {
-  if (fbo) { gl.deleteFramebuffer(fbo); gl.deleteTexture(fbTex); }
-  fbTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, fbTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  // LINEAR is intentional: the CAS pass does its own neighbourhood sampling,
-  // but the GPU's linear filter still helps during the UV->texel mapping.
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  fbo = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fbTex, 0);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-}
+            function createFBO(w, h) {
+                if (fbo) {
+                    gl.deleteFramebuffer(fbo);
+                    gl.deleteTexture(fbTex);
+                }
+                fbTex = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, fbTex);
+                gl.texImage2D(
+                    gl.TEXTURE_2D,
+                    0,
+                    gl.RGBA,
+                    w,
+                    h,
+                    0,
+                    gl.RGBA,
+                    gl.UNSIGNED_BYTE,
+                    null,
+                );
+                // LINEAR is intentional: the CAS pass does its own neighbourhood sampling,
+                // but the GPU's linear filter still helps during the UV->texel mapping.
+                gl.texParameteri(
+                    gl.TEXTURE_2D,
+                    gl.TEXTURE_MIN_FILTER,
+                    gl.LINEAR,
+                );
+                gl.texParameteri(
+                    gl.TEXTURE_2D,
+                    gl.TEXTURE_MAG_FILTER,
+                    gl.LINEAR,
+                );
+                gl.texParameteri(
+                    gl.TEXTURE_2D,
+                    gl.TEXTURE_WRAP_S,
+                    gl.CLAMP_TO_EDGE,
+                );
+                gl.texParameteri(
+                    gl.TEXTURE_2D,
+                    gl.TEXTURE_WRAP_T,
+                    gl.CLAMP_TO_EDGE,
+                );
+                fbo = gl.createFramebuffer();
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                gl.framebufferTexture2D(
+                    gl.FRAMEBUFFER,
+                    gl.COLOR_ATTACHMENT0,
+                    gl.TEXTURE_2D,
+                    fbTex,
+                    0,
+                );
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            }
 
-function readHashFloat(key, fallback) {
-  const v = parseFloat(new URLSearchParams(location.hash.slice(1)).get(key));
-  return Number.isFinite(v) ? v : fallback;
-}
-function readHashBool(key, fallback) {
-  const v = new URLSearchParams(location.hash.slice(1)).get(key);
-  if (v === null) return fallback;
-  return v === 'true' || v === '1';
-}
-function readHashColor(key, fallback) {
-  const v = new URLSearchParams(location.hash.slice(1)).get(key);
-  const m = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(v || '');
-  if (!m) return fallback;
-  const h = m[1];
-  return {
-    r: parseInt(h.slice(0, 2), 16) / 255,
-    g: parseInt(h.slice(2, 4), 16) / 255,
-    b: parseInt(h.slice(4, 6), 16) / 255,
-  };
-}
-function readSpeed() { return readHashFloat('speed', 1.0); }
-function readScale() {
-  const s = readHashFloat('scale', 0.75);
-  return Math.min(1.0, Math.max(0.1, s));
-}
-function readFpsLimit() { return Math.max(1, readHashFloat('fps', 60)); }
-function readFpsLimitEnabled() { return readHashBool('fps_limit', false); }
-function readPauseWhenHidden() { return readHashBool('pause_when_hidden', true); }
-function readSharpness() {
-  const s = readHashFloat('sharpness', 0.8);
-  return Math.min(1.0, Math.max(0.0, s));
-}
-function readColor() { return readHashColor('color', { r: 1 / 9, g: 2 / 9, b: 1 }); }
+            function readHashFloat(key, fallback) {
+                const v = parseFloat(
+                    new URLSearchParams(location.hash.slice(1)).get(key),
+                );
+                return Number.isFinite(v) ? v : fallback;
+            }
+            function readHashBool(key, fallback) {
+                const v = new URLSearchParams(location.hash.slice(1)).get(key);
+                if (v === null) return fallback;
+                return v === "true" || v === "1";
+            }
+            function readHashColor(key, fallback) {
+                const v = new URLSearchParams(location.hash.slice(1)).get(key);
+                const m = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(v || "");
+                if (!m) return fallback;
+                const h = m[1];
+                return {
+                    r: parseInt(h.slice(0, 2), 16) / 255,
+                    g: parseInt(h.slice(2, 4), 16) / 255,
+                    b: parseInt(h.slice(4, 6), 16) / 255,
+                };
+            }
+            function readSpeed() {
+                return readHashFloat("speed", 1.0);
+            }
+            function readScale() {
+                const s = readHashFloat("scale", 0.75);
+                return Math.min(1.0, Math.max(0.1, s));
+            }
+            function readFpsLimit() {
+                return Math.max(1, readHashFloat("fps", 60));
+            }
+            function readFpsLimitEnabled() {
+                return readHashBool("fps_limit", false);
+            }
+            function readPauseWhenHidden() {
+                return readHashBool("pause_when_hidden", true);
+            }
+            function readSharpness() {
+                const s = readHashFloat("sharpness", 0.8);
+                return Math.min(1.0, Math.max(0.0, s));
+            }
+            function readColor() {
+                return readHashColor("color", { r: 1 / 9, g: 2 / 9, b: 1 });
+            }
 
-let speed = readSpeed();
-let scale = readScale();
-let fpsLimit = readFpsLimit();
-let fpsLimitEnabled = readFpsLimitEnabled();
-let pauseWhenHidden = readPauseWhenHidden();
-let sharpness = readSharpness();
-let color = readColor();
+            let speed = readSpeed();
+            let scale = readScale();
+            let fpsLimit = readFpsLimit();
+            let fpsLimitEnabled = readFpsLimitEnabled();
+            let pauseWhenHidden = readPauseWhenHidden();
+            let sharpness = readSharpness();
+            let color = readColor();
 
-function resize() {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
-  halfW = Math.max(1, Math.floor(canvas.width  * scale));
-  halfH = Math.max(1, Math.floor(canvas.height * scale));
-  createFBO(halfW, halfH);
-}
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                halfW = Math.max(1, Math.floor(canvas.width * scale));
+                halfH = Math.max(1, Math.floor(canvas.height * scale));
+                createFBO(halfW, halfH);
+            }
 
-window.addEventListener('resize', resize);
-resize();
+            window.addEventListener("resize", resize);
+            resize();
 
-window.addEventListener('hashchange', () => {
-  speed = readSpeed();
-  fpsLimit = readFpsLimit();
-  fpsLimitEnabled = readFpsLimitEnabled();
-  pauseWhenHidden = readPauseWhenHidden();
-  sharpness = readSharpness();
-  color = readColor();
-  const newScale = readScale();
-  if (newScale !== scale) {
-    scale = newScale;
-    resize();
-  }
-});
+            window.addEventListener("hashchange", () => {
+                speed = readSpeed();
+                fpsLimit = readFpsLimit();
+                fpsLimitEnabled = readFpsLimitEnabled();
+                pauseWhenHidden = readPauseWhenHidden();
+                sharpness = readSharpness();
+                color = readColor();
+                const newScale = readScale();
+                if (newScale !== scale) {
+                    scale = newScale;
+                    resize();
+                }
+            });
 
-let simTime = 0;
-let lastReal = performance.now();
-let nextDraw = 0;
+            let simTime = 0;
+            let lastReal = performance.now();
+            let nextDraw = 0;
 
-function frame() {
-  const nowReal = performance.now();
+            function frame() {
+                const nowReal = performance.now();
 
-  if (pauseWhenHidden && document.visibilityState === 'hidden') {
-    lastReal = nowReal;
-    nextDraw = 0;
-    requestAnimationFrame(frame);
-    return;
-  }
+                if (pauseWhenHidden && document.visibilityState === "hidden") {
+                    lastReal = nowReal;
+                    nextDraw = 0;
+                    requestAnimationFrame(frame);
+                    return;
+                }
 
-  const dt = (nowReal - lastReal) / 1000;
-  lastReal = nowReal;
-  // Loop simTime at the exact shader period (cos(0.3*iTime+...)) so fp32
-  // precision in the GL uniform stays high during multi-hour runs.
-  simTime = (simTime + dt * speed) % (2 * Math.PI / 0.3);
+                const dt = (nowReal - lastReal) / 1000;
+                lastReal = nowReal;
+                // Loop simTime at the exact shader period (cos(0.3*iTime+...)) so fp32
+                // precision in the GL uniform stays high during multi-hour runs.
+                simTime = (simTime + dt * speed) % ((2 * Math.PI) / 0.3);
 
-  if (fpsLimitEnabled) {
-    const minInterval = 1000 / fpsLimit;
-    // Half-interval slack: rAF ticks land on the vsync grid, so a frame that
-    // arrives slightly *before* the deadline should still draw rather than
-    // get pushed to the next vsync (which causes the jitter).
-    if (nowReal + minInterval * 0.5 < nextDraw) {
-      requestAnimationFrame(frame);
-      return;
-    }
-    // Advance schedule by whole intervals; clamp if we fell far behind so we
-    // don't burst-render to catch up.
-    if (nextDraw === 0 || nowReal - nextDraw > minInterval * 2) {
-      nextDraw = nowReal + minInterval;
-    } else {
-      nextDraw += minInterval;
-    }
-  }
-  const t = simTime;
+                if (fpsLimitEnabled) {
+                    const minInterval = 1000 / fpsLimit;
+                    // Half-interval slack: rAF ticks land on the vsync grid, so a frame that
+                    // arrives slightly *before* the deadline should still draw rather than
+                    // get pushed to the next vsync (which causes the jitter).
+                    if (nowReal + minInterval * 0.5 < nextDraw) {
+                        requestAnimationFrame(frame);
+                        return;
+                    }
+                    // Advance schedule by whole intervals; clamp if we fell far behind so we
+                    // don't burst-render to catch up.
+                    if (
+                        nextDraw === 0 ||
+                        nowReal - nextDraw > minInterval * 2
+                    ) {
+                        nextDraw = nowReal + minInterval;
+                    } else {
+                        nextDraw += minInterval;
+                    }
+                }
+                const t = simTime;
 
-  // Pass 1: render scene at half resolution into the FBO.
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-  gl.viewport(0, 0, halfW, halfH);
-  gl.useProgram(sceneProg);
-  bindQuad(sceneProg);
-  gl.uniform3f(uRes, halfW, halfH, 1.0);
-  gl.uniform1f(uTime, t);
-  gl.uniform3f(uColor, color.r, color.g, color.b);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                // Pass 1: render scene at half resolution into the FBO.
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                gl.viewport(0, 0, halfW, halfH);
+                gl.useProgram(sceneProg);
+                bindQuad(sceneProg);
+                gl.uniform3f(uRes, halfW, halfH, 1.0);
+                gl.uniform1f(uTime, t);
+                gl.uniform3f(uColor, color.r, color.g, color.b);
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  // Pass 2: CAS upscale from half-res texture to full canvas.
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.useProgram(casProg);
-  bindQuad(casProg);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, fbTex);
-  gl.uniform1i(uTex, 0);
-  gl.uniform2f(uTexelSize, 1.0 / halfW, 1.0 / halfH);
-  gl.uniform1f(uSharpness, 1.0 - sharpness);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                // Pass 2: CAS upscale from half-res texture to full canvas.
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                gl.viewport(0, 0, canvas.width, canvas.height);
+                gl.useProgram(casProg);
+                bindQuad(casProg);
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, fbTex);
+                gl.uniform1i(uTex, 0);
+                gl.uniform2f(uTexelSize, 1.0 / halfW, 1.0 / halfH);
+                gl.uniform1f(uSharpness, 1.0 - sharpness);
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  requestAnimationFrame(frame);
-}
+                requestAnimationFrame(frame);
+            }
 
-requestAnimationFrame(frame);
-</script>
-</body>
+            requestAnimationFrame(frame);
+        </script>
+    </body>
 </html>

@@ -284,27 +284,39 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-fn wallpaper_url(index: usize, wallpaper: &str) -> url::Url {
+/// Builds the navigate-form origin for one realm of a monitor's wallpaper. Each
+/// realm gets its own origin so the wallpaper's own bundled files (`wallpaper`)
+/// stay isolated from arbitrary user-selected files (`asset`). On Windows this
+/// is wry's `http://underpane.<host>` WebView2 workaround form; elsewhere it's
+/// the native `underpane://<host>` custom-scheme form.
+pub(crate) fn realm_origin(realm: &str, index: usize, id: &str) -> String {
     let i1 = index + 1;
-    let mut u = url::Url::parse("underpane-wallpaper://wallpaper").unwrap();
-    u.set_host(Some(&format!("monitor-{i1}.{wallpaper}")))
+    #[cfg(windows)]
+    {
+        // wry's custom-protocol workaround for WebView2: maps custom-scheme://host -> http://custom-scheme.host
+        return format!("http://underpane.monitor-{i1}.{id}.{realm}");
+    }
+
+    #[cfg(not(windows))]
+    return format!("underpane://monitor-{i1}.{id}.{realm}");
+}
+
+fn wallpaper_url(index: usize, id: &str) -> url::Url {
+    let i1 = index + 1;
+    let mut u = url::Url::parse("underpane://wallpaper").unwrap();
+    u.set_host(Some(&format!("monitor-{i1}.{id}.wallpaper")))
         .unwrap();
     u
 }
 
-fn wallpaper_navigate_url(index: usize, wallpaper: &str) -> url::Url {
+fn wallpaper_navigate_url(index: usize, id: &str) -> url::Url {
     #[cfg(windows)]
     {
-        let i1 = index + 1;
-        // wry's custom-protocol workaround for WebView2: maps custom-scheme://host -> http://custom-scheme.host
-        return url::Url::parse(&format!(
-            "http://underpane-wallpaper.monitor-{i1}.{wallpaper}"
-        ))
-        .unwrap();
+        return url::Url::parse(&realm_origin("wallpaper", index, id)).unwrap();
     }
 
     #[cfg(not(windows))]
-    return wallpaper_url(index, wallpaper);
+    return wallpaper_url(index, id);
 }
 
 fn logical_monitor_rect(index: usize) -> Option<LogicalRect<f64, f64>> {
@@ -416,11 +428,10 @@ impl DesktopWindow {
                 monitor_config.config.entry(key).or_insert(value);
             }
 
-            // Rewrite `file` inputs from their on-disk path to a domain-relative
-            // proxy path. The wallpaper page is served from the
-            // `underpane-wallpaper://monitor-{n}.{wallpaper}` origin, so this
-            // relative path resolves against it and the protocol handler maps it
-            // back to the file on disk.
+            // Rewrite `file` inputs from their on-disk path to an absolute URL in
+            // the wallpaper's `asset` realm origin. Serving user-selected files
+            // from a separate origin than the wallpaper's own code keeps the two
+            // isolated; the protocol handler maps the URL back to the file on disk.
             for (key, schema) in &manifest.config {
                 if !matches!(schema, WallpaperConfigSchema::File { .. }) {
                     continue;
@@ -435,11 +446,13 @@ impl DesktopWindow {
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "file".to_string());
-                let encoded = utf8_percent_encode(&filename, PATH_SEGMENT).to_string();
-                let proxy = format!("/.underpane/external-file/{key}/{encoded}");
+                let encoded_key = utf8_percent_encode(key, PATH_SEGMENT).to_string();
+                let encoded_filename = utf8_percent_encode(&filename, PATH_SEGMENT).to_string();
+                let origin = realm_origin("asset", self.index, &monitor_config.wallpaper);
+                let url = format!("{origin}/{encoded_key}/{encoded_filename}");
                 monitor_config
                     .config
-                    .insert(key.clone(), Scalar::String(proxy));
+                    .insert(key.clone(), Scalar::String(url));
             }
         }
 

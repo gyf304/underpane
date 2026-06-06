@@ -105,9 +105,11 @@ impl Default for Config {
 
 pub(crate) fn expand_tilde(raw: &str) -> PathBuf {
     if let Some(rest) = raw.strip_prefix("~/") {
-        directories::BaseDirs::new()
-            .map(|b| b.home_dir().join(rest))
-            .unwrap_or_else(|| PathBuf::from(raw))
+        APP_HANDLE
+            .path()
+            .home_dir()
+            .map(|h| h.join(rest))
+            .unwrap_or_else(|_| PathBuf::from(raw))
     } else {
         PathBuf::from(raw)
     }
