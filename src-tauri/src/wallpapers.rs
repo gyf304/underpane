@@ -59,6 +59,12 @@ pub enum WallpaperConfigSchema {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         extensions: Vec<String>,
     },
+    Directory {
+        name: String,
+        group: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

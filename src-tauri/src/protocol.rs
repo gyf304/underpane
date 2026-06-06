@@ -1,7 +1,7 @@
 use crate::config::{expand_tilde, Scalar, CONFIG};
-use crate::desktop_windows::realm_origin;
+use crate::desktop_windows::{realm_origin, PATH_SEGMENT};
 use crate::wallpapers::{WallpaperConfigSchema, WallpaperManifest};
-use percent_encoding::percent_decode_str;
+use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use std::path::PathBuf;
 
 const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
@@ -124,22 +124,75 @@ async fn handle_inner(
         path = "index.html".to_string();
     }
 
-    let (resolved, max_bytes) = match target.realm.as_str() {
-        "wallpaper" => (
-            resolve_wallpaper_file(&target.id, &path).await,
-            MAX_RESPONSE_BYTES,
-        ),
-        // Bare `{input-id}/{filename}` path within the wallpaper's `asset` realm.
-        "asset" => (
-            resolve_external_file(target.index, &target.id, &path).await,
-            MAX_EXTERNAL_RESPONSE_BYTES,
-        ),
-        _ => return not_found(),
-    };
-    let Some((full_path, metadata)) = resolved else {
+    match target.realm.as_str() {
+        "wallpaper" => {
+            let Some((full_path, metadata)) = resolve_wallpaper_file(&target.id, &path).await
+            else {
+                return not_found();
+            };
+            serve_file(request, &full_path, &metadata, MAX_RESPONSE_BYTES).await
+        }
+        // `{input-id}` (a `file`/`directory` input) followed, for directories, by a
+        // page-supplied relative path within the wallpaper's `asset` realm.
+        "asset" => {
+            let Some((full_path, metadata)) =
+                resolve_external_file(target.index, &target.id, &path).await
+            else {
+                return not_found();
+            };
+            if metadata.is_dir() {
+                // A directory only responds to an explicit `text/uri-list` request,
+                // with a single-level listing; otherwise there's nothing to serve.
+                if accepts_uri_list(request) {
+                    return uri_list(&full_path).await;
+                }
+                return not_found();
+            }
+            serve_file(request, &full_path, &metadata, MAX_EXTERNAL_RESPONSE_BYTES).await
+        }
+        _ => not_found(),
+    }
+}
+
+/// Whether the request's `Accept` header opts into a `text/uri-list` listing.
+fn accepts_uri_list(request: &tauri::http::Request<Vec<u8>>) -> bool {
+    request
+        .headers()
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|a| a.to_ascii_lowercase().contains("text/uri-list"))
+}
+
+/// Builds a single-level `text/uri-list` listing of a directory's immediate
+/// children: one percent-encoded name per line (CRLF), directories suffixed `/`,
+/// emitted relative to the request URL. Symlinked entries are skipped so they
+/// can't be traversed.
+async fn uri_list(dir: &std::path::Path) -> tauri::http::Response<Vec<u8>> {
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
         return not_found();
     };
-    serve_file(request, &full_path, &metadata, max_bytes).await
+    let mut lines: Vec<String> = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        // `DirEntry::file_type` reports the entry itself (not its symlink target).
+        let Ok(ft) = entry.file_type().await else {
+            continue;
+        };
+        if ft.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let encoded = utf8_percent_encode(&name.to_string_lossy(), PATH_SEGMENT).to_string();
+        lines.push(if ft.is_dir() {
+            format!("{encoded}/")
+        } else {
+            encoded
+        });
+    }
+    tauri::http::Response::builder()
+        .status(200)
+        .header("Content-Type", "text/uri-list")
+        .body(lines.join("\r\n").into_bytes())
+        .unwrap()
 }
 
 /// Resolves a normal asset path within the wallpaper's directory, searching the
@@ -158,30 +211,32 @@ async fn resolve_wallpaper_file(
     None
 }
 
-/// Resolves an `asset`-realm `{input-id}/{filename}` path to the on-disk file
-/// selected for that `file` input on the given monitor. Only inputs declared as
-/// `file` in the wallpaper manifest are served, and the disk path comes from
-/// config (never from the URL), so the URL can't traverse the filesystem.
+/// Resolves an `asset`-realm path to an on-disk target. The first path segment is
+/// the `file`/`directory` input id (the configured disk path comes from config,
+/// never the URL). For a `file` input the disk path is the target. For a
+/// `directory` input the remaining segments are a relative sub-path resolved
+/// *inside* the chosen folder, allowing no symlink traversal — the returned
+/// target may be a file or a directory.
 async fn resolve_external_file(
     index: usize,
     wallpaper: &str,
     rest: &str,
 ) -> Option<(PathBuf, std::fs::Metadata)> {
-    let raw = rest.split('/').next().filter(|s| !s.is_empty())?;
+    let mut segments = rest.split('/');
+    let raw_id = segments.next().filter(|s| !s.is_empty())?;
     // The input id is percent-encoded in the URL; decode before matching config keys.
-    let input_id = percent_decode_str(raw).decode_utf8().ok()?;
+    let input_id = percent_decode_str(raw_id).decode_utf8().ok()?;
     let input_id = input_id.as_ref();
 
     let manifest = WallpaperManifest::get(wallpaper).ok()?;
-    if !matches!(
-        manifest.config.get(input_id),
-        Some(WallpaperConfigSchema::File { .. })
-    ) {
-        return None;
-    }
+    let is_dir = match manifest.config.get(input_id) {
+        Some(WallpaperConfigSchema::File { .. }) => false,
+        Some(WallpaperConfigSchema::Directory { .. }) => true,
+        _ => return None,
+    };
 
-    // Clone the stored path out before any `.await` so the CONFIG borrow guard
-    // isn't held across an await point.
+    // Clone the stored disk path out before any `.await` so the CONFIG borrow
+    // guard isn't held across an await point.
     let disk_path = {
         let cfg = CONFIG.borrow();
         let monitor_config = cfg.get_monitor_config(index)?;
@@ -191,11 +246,37 @@ async fn resolve_external_file(
         }
     };
 
-    let metadata = tokio::fs::metadata(&disk_path).await.ok()?;
-    if !metadata.is_file() {
-        return None;
+    if !is_dir {
+        // `file` input: the disk path is the exact file; trailing URL path ignored.
+        let metadata = tokio::fs::metadata(&disk_path).await.ok()?;
+        return metadata.is_file().then_some((disk_path, metadata));
     }
-    Some((disk_path, metadata))
+
+    // `directory` input: walk the relative sub-path one decoded segment at a time
+    // from the canonicalized base, rejecting `.`/`..`/empty/odd segments and any
+    // component that is a symlink. With no `..` and no symlinks followed, the
+    // result is guaranteed to stay inside the chosen folder.
+    let mut current = tokio::fs::canonicalize(&disk_path).await.ok()?;
+    for raw_seg in segments {
+        if raw_seg.is_empty() {
+            continue;
+        }
+        let seg = percent_decode_str(raw_seg).decode_utf8().ok()?;
+        if seg == "." || seg == ".." || seg.contains('/') || seg.contains('\\') {
+            return None;
+        }
+        // Defense in depth: a valid name is exactly one normal path component.
+        if std::path::Path::new(seg.as_ref()).components().count() != 1 {
+            return None;
+        }
+        current.push(seg.as_ref());
+        let meta = tokio::fs::symlink_metadata(&current).await.ok()?;
+        if meta.file_type().is_symlink() {
+            return None;
+        }
+    }
+    let metadata = tokio::fs::metadata(&current).await.ok()?;
+    Some((current, metadata))
 }
 
 async fn serve_file(

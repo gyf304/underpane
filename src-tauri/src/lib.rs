@@ -110,6 +110,7 @@ pub fn run() {
             handlers::install_wallpaper,
             handlers::take_pending_install_url,
             handlers::pick_file,
+            handlers::pick_directory,
         ])
         .register_asynchronous_uri_scheme_protocol(
             "underpane",

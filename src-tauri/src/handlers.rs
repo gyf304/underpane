@@ -174,6 +174,21 @@ pub async fn pick_file(
 }
 
 #[tauri::command]
+pub async fn pick_directory(app: AppHandle, window: Window) -> Result<Option<String>, String> {
+    require_config_window(&window)?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_folder(move |path| {
+        let _ = tx.send(path);
+    });
+
+    let picked = rx.await.map_err(|e| e.to_string())?;
+    Ok(picked
+        .and_then(|fp| fp.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
 pub fn runtime_log(webview: Webview, level: String, message: String) {
     let line = format!("[{} {level}] {message}", webview.label());
     if level == "warn" || level == "error" {

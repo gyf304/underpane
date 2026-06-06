@@ -22,7 +22,7 @@ const RUNTIME_JS: &str = include_str!("runtime.js");
 /// Characters to percent-encode within a single URL path segment (the file name
 /// of a `file` input). Encodes controls, space, and characters that would
 /// otherwise be interpreted as delimiters.
-const PATH_SEGMENT: &AsciiSet = &CONTROLS
+pub(crate) const PATH_SEGMENT: &AsciiSet = &CONTROLS
     .add(b' ')
     .add(b'"')
     .add(b'#')
@@ -428,28 +428,36 @@ impl DesktopWindow {
                 monitor_config.config.entry(key).or_insert(value);
             }
 
-            // Rewrite `file` inputs from their on-disk path to an absolute URL in
-            // the wallpaper's `asset` realm origin. Serving user-selected files
-            // from a separate origin than the wallpaper's own code keeps the two
-            // isolated; the protocol handler maps the URL back to the file on disk.
+            // Rewrite `file`/`directory` inputs from their on-disk path to an
+            // absolute URL in the wallpaper's `asset` realm origin. Serving
+            // user-selected files from a separate origin than the wallpaper's own
+            // code keeps the two isolated; the protocol handler maps the URL back
+            // to disk. A `file` resolves to one file; a `directory` becomes a base
+            // URL (trailing slash) the page appends relative paths to.
             for (key, schema) in &manifest.config {
-                if !matches!(schema, WallpaperConfigSchema::File { .. }) {
-                    continue;
-                }
+                let is_dir = match schema {
+                    WallpaperConfigSchema::File { .. } => false,
+                    WallpaperConfigSchema::Directory { .. } => true,
+                    _ => continue,
+                };
                 let Some(Scalar::String(path)) = monitor_config.config.get(key) else {
                     continue;
                 };
                 if path.is_empty() {
                     continue;
                 }
-                let filename = std::path::Path::new(path)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "file".to_string());
-                let encoded_key = utf8_percent_encode(key, PATH_SEGMENT).to_string();
-                let encoded_filename = utf8_percent_encode(&filename, PATH_SEGMENT).to_string();
                 let origin = realm_origin("asset", self.index, &monitor_config.wallpaper);
-                let url = format!("{origin}/{encoded_key}/{encoded_filename}");
+                let encoded_key = utf8_percent_encode(key, PATH_SEGMENT).to_string();
+                let url = if is_dir {
+                    format!("{origin}/{encoded_key}/")
+                } else {
+                    let filename = std::path::Path::new(path)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "file".to_string());
+                    let encoded_filename = utf8_percent_encode(&filename, PATH_SEGMENT).to_string();
+                    format!("{origin}/{encoded_key}/{encoded_filename}")
+                };
                 monitor_config
                     .config
                     .insert(key.clone(), Scalar::String(url));
