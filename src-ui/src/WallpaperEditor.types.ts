@@ -9,8 +9,8 @@ export interface SystemConfig {
 
 export interface MonitorInfo {
   id: string;
-  position: { x: number; y: number; };
-  size: { width: number; height: number; };
+  position: { x: number; y: number };
+  size: { width: number; height: number };
 }
 
 interface WallpaperConfigSchemaBase {

@@ -1,15 +1,19 @@
 @import "../styles/globals.css";
 
-html,body,#root {
-  overflow: hidden;
+html,
+body,
+#root {
+    overflow: hidden;
 }
 
 * {
-  user-select: none;
-  -webkit-user-select: none;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
-input, textarea, [contenteditable] {
-  user-select: text;
-  -webkit-user-select: text;
+input,
+textarea,
+[contenteditable] {
+    user-select: text;
+    -webkit-user-select: text;
 }

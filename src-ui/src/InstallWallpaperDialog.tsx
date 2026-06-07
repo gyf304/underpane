@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { installWallpaper } from "./WallpaperEditor.api";
+import { t } from "./i18n";
 
 // Mirrors `is_valid_wallpaper_id` in src-tauri/src/config.rs: must be a valid
 // hostname fragment used in the custom protocol host.
@@ -123,10 +124,8 @@ export function InstallWallpaperDialog({
   }, [onClose]);
 
   const nameError = useMemo(() => {
-    if (!name) return "Name required";
-    if (!NAME_RE.test(name)) {
-      return "Allowed: lowercase letters, digits, '-' (cannot start or end with '-')";
-    }
+    if (!name) return t("install.error.nameRequired");
+    if (!NAME_RE.test(name)) return t("install.error.nameInvalid");
     return null;
   }, [name]);
 
@@ -195,15 +194,15 @@ export function InstallWallpaperDialog({
     >
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Install wallpaper</DialogTitle>
+          <DialogTitle>{t("install.title")}</DialogTitle>
           <DialogDescription className="break-all">
-            From: <code className="text-xs">{zipUrl}</code>
+            {t("install.from")({ url: zipUrl })}
           </DialogDescription>
         </DialogHeader>
 
         {stage.kind === "name" && (
           <div className="space-y-3">
-            <Label htmlFor="wp-name">Install to folder</Label>
+            <Label htmlFor="wp-name">{t("install.folder.label")}</Label>
             <Input
               id="wp-name"
               value={name}
@@ -215,10 +214,10 @@ export function InstallWallpaperDialog({
             )}
             <DialogFooter>
               <Button variant="outline" onClick={handleClose}>
-                Cancel
+                {t("install.cancel")}
               </Button>
               <Button onClick={beginInstall} disabled={!!nameError}>
-                Install
+                {t("install.install")}
               </Button>
             </DialogFooter>
           </div>
@@ -227,7 +226,7 @@ export function InstallWallpaperDialog({
         {stage.kind === "installing" && (
           <div className="space-y-3">
             <p className="text-sm">
-              Installing <b>{name}</b>…
+              {t("install.installing")({ name })}
             </p>
             {stage.progress.phase === "progress" ? (
               <>
@@ -244,12 +243,15 @@ export function InstallWallpaperDialog({
                   {humanBytes(stage.progress.bytesDone)} /{" "}
                   {humanBytes(stage.progress.bytesTotal)}
                   {stage.progress.filesTotal != null
-                    ? ` · ${stage.progress.filesDone}/${stage.progress.filesTotal} files`
+                    ? t("install.filesSuffix")({
+                        done: stage.progress.filesDone,
+                        total: stage.progress.filesTotal,
+                      })
                     : ""}
                 </p>
               </>
             ) : (
-              <p className="text-sm text-muted-foreground">Validating…</p>
+              <p className="text-sm text-muted-foreground">{t("install.validating")}</p>
             )}
           </div>
         )}
@@ -257,10 +259,10 @@ export function InstallWallpaperDialog({
         {stage.kind === "done" && (
           <div className="space-y-3">
             <p className="text-sm">
-              Installed <b>{name}</b>.
+              {t("install.installed")({ name })}
             </p>
             <DialogFooter>
-              <Button onClick={handleClose}>Close</Button>
+              <Button onClick={handleClose}>{t("install.close")}</Button>
             </DialogFooter>
           </div>
         )}
@@ -270,9 +272,9 @@ export function InstallWallpaperDialog({
             <p className="text-sm text-destructive">{stage.message}</p>
             <DialogFooter>
               <Button variant="outline" onClick={handleClose}>
-                Cancel
+                {t("install.cancel")}
               </Button>
-              <Button onClick={() => setStage({ kind: "name" })}>Retry</Button>
+              <Button onClick={() => setStage({ kind: "name" })}>{t("install.retry")}</Button>
             </DialogFooter>
           </div>
         )}

@@ -20,15 +20,43 @@ export type QuickstartStepId =
   | "autostart"
   | "done";
 
-const STEPS: Array<{ id: QuickstartStepId; titleKey: string; descKey: string }> = [
-  { id: "welcome", titleKey: "quickstart.welcome.title", descKey: "quickstart.welcome.desc" },
-  { id: "monitors", titleKey: "quickstart.monitors.title", descKey: "quickstart.monitors.desc" },
-  { id: "wallpaper", titleKey: "quickstart.wallpaper.title", descKey: "quickstart.wallpaper.desc" },
-  { id: "config", titleKey: "quickstart.config.title", descKey: "quickstart.config.desc" },
-  { id: "addWallpapers", titleKey: "quickstart.addWallpapers.title", descKey: "quickstart.addWallpapers.desc" },
-  { id: "autostart", titleKey: "quickstart.autostart.title", descKey: "quickstart.autostart.desc" },
-  { id: "done", titleKey: "quickstart.done.title", descKey: "quickstart.done.desc" },
-];
+const STEPS = [
+  {
+    id: "welcome",
+    titleKey: "quickstart.welcome.title",
+    descKey: "quickstart.welcome.desc",
+  },
+  {
+    id: "monitors",
+    titleKey: "quickstart.monitors.title",
+    descKey: "quickstart.monitors.desc",
+  },
+  {
+    id: "wallpaper",
+    titleKey: "quickstart.wallpaper.title",
+    descKey: "quickstart.wallpaper.desc",
+  },
+  {
+    id: "config",
+    titleKey: "quickstart.config.title",
+    descKey: "quickstart.config.desc",
+  },
+  {
+    id: "addWallpapers",
+    titleKey: "quickstart.addWallpapers.title",
+    descKey: "quickstart.addWallpapers.desc",
+  },
+  {
+    id: "autostart",
+    titleKey: "quickstart.autostart.title",
+    descKey: "quickstart.autostart.desc",
+  },
+  {
+    id: "done",
+    titleKey: "quickstart.done.title",
+    descKey: "quickstart.done.desc",
+  },
+] as const;
 
 export function Quickstart({
   open,
@@ -64,7 +92,7 @@ export function Quickstart({
       <DialogContent
         showOverlay={false}
         className="top-auto bottom-4 left-auto right-4 translate-x-0 translate-y-0"
-        onInteractOutside={e => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
       >
         <DialogHeader>
           <DialogTitle>{t(current.titleKey)}</DialogTitle>
@@ -77,7 +105,7 @@ export function Quickstart({
               key={s.id}
               className={cn(
                 "h-1.5 w-1.5 rounded-full transition-colors",
-                i === step ? "bg-primary" : "bg-muted"
+                i === step ? "bg-primary" : "bg-muted",
               )}
             />
           ))}
@@ -85,7 +113,11 @@ export function Quickstart({
 
         <DialogFooter className="sm:justify-between">
           {!isLast ? (
-            <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+            >
               {t("quickstart.skip")}
             </Button>
           ) : (
@@ -96,7 +128,7 @@ export function Quickstart({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setStep(s => s - 1)}
+                onClick={() => setStep((s) => s - 1)}
               >
                 {t("quickstart.back")}
               </Button>
@@ -105,7 +137,7 @@ export function Quickstart({
               size="sm"
               disabled={!isLast && !canProceed}
               onClick={() =>
-                isLast ? onOpenChange(false) : setStep(s => s + 1)
+                isLast ? onOpenChange(false) : setStep((s) => s + 1)
               }
             >
               {isLast ? t("quickstart.done") : t("quickstart.next")}

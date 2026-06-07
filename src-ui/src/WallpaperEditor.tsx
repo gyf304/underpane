@@ -21,7 +21,18 @@ import {
   type WallpaperConfigSchema,
   type SaveStatus,
 } from "./WallpaperEditor.types";
-import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir, getAutostart, setAutostart, pickFile, pickDirectory } from "./WallpaperEditor.api";
+import {
+  readConfig,
+  writeConfig,
+  listMonitors,
+  wallpapers,
+  openConfigFile,
+  openWallpapersDir,
+  getAutostart,
+  setAutostart,
+  pickFile,
+  pickDirectory,
+} from "./WallpaperEditor.api";
 import { Quickstart, type QuickstartStepId } from "./Quickstart";
 import { InstallWallpaperDialog } from "./InstallWallpaperDialog";
 import { listen } from "@tauri-apps/api/event";
@@ -68,14 +79,14 @@ function MonitorCanvas({
   }
 
   const PAD = 16;
-  const minX = Math.min(...monitors.map(m => m.position.x));
-  const minY = Math.min(...monitors.map(m => m.position.y));
-  const maxX = Math.max(...monitors.map(m => m.position.x + m.size.width));
-  const maxY = Math.max(...monitors.map(m => m.position.y + m.size.height));
+  const minX = Math.min(...monitors.map((m) => m.position.x));
+  const minY = Math.min(...monitors.map((m) => m.position.y));
+  const maxX = Math.max(...monitors.map((m) => m.position.x + m.size.width));
+  const maxY = Math.max(...monitors.map((m) => m.position.y + m.size.height));
 
   const scale = Math.min(
     (canvasW - PAD * 2) / (maxX - minX),
-    (CANVAS_H - PAD * 2) / (maxY - minY)
+    (CANVAS_H - PAD * 2) / (maxY - minY),
   );
   const ox = (canvasW - (maxX - minX) * scale) / 2;
   const oy = (CANVAS_H - (maxY - minY) * scale) / 2;
@@ -86,7 +97,7 @@ function MonitorCanvas({
       className="relative w-full overflow-hidden rounded bg-muted"
       style={{ height: CANVAS_H }}
     >
-      {monitors.map(m => {
+      {monitors.map((m) => {
         const l = ox + (m.position.x - minX) * scale;
         const t = oy + (m.position.y - minY) * scale;
         const w = m.size.width * scale;
@@ -101,7 +112,7 @@ function MonitorCanvas({
               "absolute flex flex-col items-center justify-center overflow-hidden rounded border bg-card transition-colors",
               selectedId === m.id
                 ? "border-primary text-primary"
-                : "border-border text-muted-foreground hover:border-foreground hover:text-foreground"
+                : "border-border text-muted-foreground hover:border-foreground hover:text-foreground",
             )}
             style={{ left: l, top: t, width: w, height: h }}
           >
@@ -125,14 +136,20 @@ function ConfigFieldRow({
   onChange: (v: unknown) => void;
 }) {
   const id = `cfg-${fieldKey}`;
-  const placeholder = "default" in field && field.default != null ? String(field.default) : undefined;
+  const placeholder =
+    "default" in field && field.default != null
+      ? String(field.default)
+      : undefined;
   // An unset value (null/undefined) already resolves to the default, so reverting
   // simply clears the override. Disable the control when nothing to revert.
   const isDefault = value == null;
 
   const labelRow = (
     <div className="flex items-center gap-1.5 flex-wrap">
-      <Label htmlFor={id} className="cursor-pointer text-sm font-medium leading-none">
+      <Label
+        htmlFor={id}
+        className="cursor-pointer text-sm font-medium leading-none"
+      >
         {field.name}
       </Label>
       <span className="rounded border px-1 py-px text-[10px] font-normal leading-tight text-muted-foreground">
@@ -160,7 +177,9 @@ function ConfigFieldRow({
         <div className="flex flex-1 flex-col gap-1">
           {labelRow}
           {field.description && (
-            <p className="text-xs leading-snug text-muted-foreground">{field.description}</p>
+            <p className="text-xs leading-snug text-muted-foreground">
+              {field.description}
+            </p>
           )}
         </div>
         <Switch
@@ -177,7 +196,9 @@ function ConfigFieldRow({
       <div className="space-y-1.5">
         {labelRow}
         {field.description && (
-          <p className="text-xs leading-snug text-muted-foreground">{field.description}</p>
+          <p className="text-xs leading-snug text-muted-foreground">
+            {field.description}
+          </p>
         )}
         <ColorPicker
           id={id}
@@ -197,7 +218,9 @@ function ConfigFieldRow({
       <div className="space-y-1.5">
         {labelRow}
         {field.description && (
-          <p className="text-xs leading-snug text-muted-foreground">{field.description}</p>
+          <p className="text-xs leading-snug text-muted-foreground">
+            {field.description}
+          </p>
         )}
         <div className="flex items-center gap-2">
           <Button
@@ -232,7 +255,9 @@ function ConfigFieldRow({
       <div className="space-y-1.5">
         {labelRow}
         {field.description && (
-          <p className="text-xs leading-snug text-muted-foreground">{field.description}</p>
+          <p className="text-xs leading-snug text-muted-foreground">
+            {field.description}
+          </p>
         )}
         <div className="flex items-center gap-2">
           <Button
@@ -258,18 +283,24 @@ function ConfigFieldRow({
     );
   }
 
-  const hasSlider = field.type === "number" && field.min != null && field.max != null;
-  const sliderDisplay = value != null
-    ? Number(value)
-    : field.default != null
-      ? Number(field.default)
-      : field.type === "number" ? (field.min ?? 0) : 0;
+  const hasSlider =
+    field.type === "number" && field.min != null && field.max != null;
+  const sliderDisplay =
+    value != null
+      ? Number(value)
+      : field.default != null
+        ? Number(field.default)
+        : field.type === "number"
+          ? (field.min ?? 0)
+          : 0;
 
   return (
     <div className="space-y-1.5">
       {labelRow}
       {field.description && (
-        <p className="text-xs leading-snug text-muted-foreground">{field.description}</p>
+        <p className="text-xs leading-snug text-muted-foreground">
+          {field.description}
+        </p>
       )}
       {hasSlider ? (
         <div className="flex items-center gap-2">
@@ -278,7 +309,7 @@ function ConfigFieldRow({
             max={field.max}
             step={field.step ?? 1}
             value={[sliderDisplay]}
-            onValueChange={v => onChange(v[0])}
+            onValueChange={(v) => onChange(v[0])}
             className="h-2 flex-1 cursor-pointer accent-primary"
           />
           <Input
@@ -290,7 +321,7 @@ function ConfigFieldRow({
             className="h-8 w-20 shrink-0 font-mono text-sm"
             value={value != null ? String(value) : ""}
             placeholder={placeholder}
-            onChange={e => {
+            onChange={(e) => {
               const v = e.target.value;
               onChange(v !== "" ? Number(v) : undefined);
             }}
@@ -303,12 +334,16 @@ function ConfigFieldRow({
           className="h-8 font-mono text-sm"
           value={value != null ? String(value) : ""}
           placeholder={placeholder}
-          onChange={e => {
+          onChange={(e) => {
             const v = e.target.value;
             onChange(
               field.type === "number"
-                ? v !== "" ? Number(v) : undefined
-                : v !== "" ? v : undefined
+                ? v !== ""
+                  ? Number(v)
+                  : undefined
+                : v !== ""
+                  ? v
+                  : undefined,
             );
           }}
         />
@@ -319,11 +354,15 @@ function ConfigFieldRow({
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
-const STATUS_VARIANTS: Record<SaveStatus, { labelKey: string; className: string; }> = {
-  idle: { labelKey: "status.idle", className: "bg-muted text-muted-foreground" },
+const STATUS_VARIANTS = {
+  idle: {
+    labelKey: "status.idle",
+    className: "bg-muted text-muted-foreground",
+  },
   unsaved: {
     labelKey: "status.unsaved",
-    className: "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
+    className:
+      "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
   },
   saving: {
     labelKey: "status.saving",
@@ -331,18 +370,24 @@ const STATUS_VARIANTS: Record<SaveStatus, { labelKey: string; className: string;
   },
   saved: {
     labelKey: "status.saved",
-    className: "bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300",
+    className:
+      "bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300",
   },
   error: {
     labelKey: "status.error",
     className: "bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300",
   },
-};
+} as const satisfies Record<
+  SaveStatus,
+  { labelKey: string; className: string }
+>;
 
-function StatusBadge({ status }: { status: SaveStatus; }) {
+function StatusBadge({ status }: { status: SaveStatus }) {
   const { labelKey, className } = STATUS_VARIANTS[status];
   return (
-    <span className={cn("rounded px-2 py-0.5 text-xs font-medium", className)}>{t(labelKey)}</span>
+    <span className={cn("rounded px-2 py-0.5 text-xs font-medium", className)}>
+      {t(labelKey)}
+    </span>
   );
 }
 
@@ -351,7 +396,9 @@ function StatusBadge({ status }: { status: SaveStatus; }) {
 export function WallpaperEditor() {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [monitorList, setMonitorList] = useState<MonitorInfo[]>([]);
-  const [wallpaperMap, setWallpaperMap] = useState<Map<string, WallpaperManifest>>(new Map());
+  const [wallpaperMap, setWallpaperMap] = useState<
+    Map<string, WallpaperManifest>
+  >(new Map());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<"general" | "monitor">("monitor");
   const [status, setStatus] = useState<SaveStatus>("idle");
@@ -359,7 +406,9 @@ export function WallpaperEditor() {
   const [autostart, setAutostartState] = useState<boolean | null>(null);
   const [savedAutostart, setSavedAutostart] = useState<boolean | null>(null);
   const [quickstartOpen, setQuickstartOpen] = useState(false);
-  const [quickstartStep, setQuickstartStep] = useState<QuickstartStepId | null>(null);
+  const [quickstartStep, setQuickstartStep] = useState<QuickstartStepId | null>(
+    null,
+  );
   const [installSourceUrl, setInstallSourceUrl] = useState<string | null>(null);
 
   const refreshWallpapers = useCallback(async () => {
@@ -388,7 +437,10 @@ export function WallpaperEditor() {
   }, []);
 
   useEffect(() => {
-    if (typeof localStorage !== "undefined" && localStorage.getItem(QUICKSTART_SEEN_KEY) !== "true") {
+    if (
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem(QUICKSTART_SEEN_KEY) !== "true"
+    ) {
       setQuickstartOpen(true);
     }
   }, []);
@@ -399,21 +451,29 @@ export function WallpaperEditor() {
     let unlisten: (() => void) | undefined;
     listen<{ source_url: string }>("install-request", (e) => {
       setInstallSourceUrl(e.payload.source_url);
-    }).then((u) => { unlisten = u; });
-    return () => { unlisten?.(); };
+    }).then((u) => {
+      unlisten = u;
+    });
+    return () => {
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
-    Promise.all([readConfig(), listMonitors(), wallpapers(), getAutostart()])
-      .then(([cfg, monitors, wpMap, autostartEnabled]) => {
-        setConfig(cfg);
-        setMonitorList(monitors);
-        setWallpaperMap(wpMap);
-        setSelectedId(monitors[0]?.id ?? null);
-        setAutostartState(autostartEnabled);
-        setSavedAutostart(autostartEnabled);
-        setLoading(false);
-      });
+    Promise.all([
+      readConfig(),
+      listMonitors(),
+      wallpapers(),
+      getAutostart(),
+    ]).then(([cfg, monitors, wpMap, autostartEnabled]) => {
+      setConfig(cfg);
+      setMonitorList(monitors);
+      setWallpaperMap(wpMap);
+      setSelectedId(monitors[0]?.id ?? null);
+      setAutostartState(autostartEnabled);
+      setSavedAutostart(autostartEnabled);
+      setLoading(false);
+    });
   }, []);
 
   const handleAutostartChange = (enabled: boolean) => {
@@ -421,8 +481,11 @@ export function WallpaperEditor() {
     setStatus("unsaved");
   };
 
-  const handleWallpaperChange = (monitorId: string, wallpaperId: string | null) => {
-    setConfig(prev => {
+  const handleWallpaperChange = (
+    monitorId: string,
+    wallpaperId: string | null,
+  ) => {
+    setConfig((prev) => {
       if (!prev) return prev;
       const monitors = { ...prev.monitors };
       if (wallpaperId) {
@@ -435,8 +498,12 @@ export function WallpaperEditor() {
     setStatus("unsaved");
   };
 
-  const handleFieldChange = (monitorId: string, key: string, value: unknown) => {
-    setConfig(prev => {
+  const handleFieldChange = (
+    monitorId: string,
+    key: string,
+    value: unknown,
+  ) => {
+    setConfig((prev) => {
       if (!prev) return prev;
       const m = prev.monitors?.[monitorId];
       if (!m) return prev;
@@ -472,7 +539,9 @@ export function WallpaperEditor() {
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <span className="text-sm text-muted-foreground">{t("editor.loading")}</span>
+        <span className="text-sm text-muted-foreground">
+          {t("editor.loading")}
+        </span>
       </div>
     );
   }
@@ -527,7 +596,7 @@ export function WallpaperEditor() {
         />
 
         <div className="space-y-0.5">
-          {monitorList.map(m => {
+          {monitorList.map((m) => {
             const mc = config?.monitors?.[m.id];
             const wpName = mc?.wallpaper
               ? (wallpaperMap.get(mc.wallpaper)?.name ?? mc.wallpaper)
@@ -541,10 +610,12 @@ export function WallpaperEditor() {
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
                   isMonitorView && selectedId === m.id
                     ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
-                <span className="w-5 shrink-0 font-mono text-xs font-semibold">{m.id}</span>
+                <span className="w-5 shrink-0 font-mono text-xs font-semibold">
+                  {m.id}
+                </span>
                 <span className="min-w-0 truncate text-xs">{wpName}</span>
               </button>
             );
@@ -564,10 +635,12 @@ export function WallpaperEditor() {
                   isMonitorView && selectedId === DEFAULT_KEY
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  quickstartStep === "monitors" && HIGHLIGHT
+                  quickstartStep === "monitors" && HIGHLIGHT,
                 )}
               >
-                <span className="w-5 shrink-0 font-mono text-xs font-semibold">*</span>
+                <span className="w-5 shrink-0 font-mono text-xs font-semibold">
+                  *
+                </span>
                 <span className="min-w-0 truncate text-xs">{wpName}</span>
               </button>
             );
@@ -585,12 +658,15 @@ export function WallpaperEditor() {
               ? "bg-accent text-accent-foreground"
               : "text-muted-foreground hover:bg-muted hover:text-foreground",
             view !== "general" &&
-              (quickstartStep === "addWallpapers" || quickstartStep === "autostart") &&
-              HIGHLIGHT
+              (quickstartStep === "addWallpapers" ||
+                quickstartStep === "autostart") &&
+              HIGHLIGHT,
           )}
         >
           <Settings className="h-4 w-4 shrink-0" />
-          <span className="text-xs font-semibold uppercase tracking-widest">{t("editor.generalSettings")}</span>
+          <span className="text-xs font-semibold uppercase tracking-widest">
+            {t("editor.generalSettings")}
+          </span>
         </button>
       </div>
 
@@ -625,8 +701,8 @@ export function WallpaperEditor() {
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    openConfigFile().catch(err =>
-                      console.error("failed to open config file", err)
+                    openConfigFile().catch((err) =>
+                      console.error("failed to open config file", err),
                     );
                   }}
                 >
@@ -643,10 +719,12 @@ export function WallpaperEditor() {
                 <Button
                   size="sm"
                   variant="outline"
-                  className={cn(quickstartStep === "addWallpapers" && HIGHLIGHT)}
+                  className={cn(
+                    quickstartStep === "addWallpapers" && HIGHLIGHT,
+                  )}
                   onClick={() => {
-                    openWallpapersDir().catch(err =>
-                      console.error("failed to open wallpapers dir", err)
+                    openWallpapersDir().catch((err) =>
+                      console.error("failed to open wallpapers dir", err),
                     );
                   }}
                 >
@@ -686,7 +764,9 @@ export function WallpaperEditor() {
               </div>
             </div>
           ) : !selectedId ? (
-            <p className="text-sm text-muted-foreground">{t("editor.selectMonitor")}</p>
+            <p className="text-sm text-muted-foreground">
+              {t("editor.selectMonitor")}
+            </p>
           ) : (
             <div className="max-w-lg space-y-6">
               {/* Wallpaper selector */}
@@ -696,27 +776,31 @@ export function WallpaperEditor() {
                 </Label>
                 <Select
                   value={selMonitor?.wallpaper ?? NONE}
-                  onValueChange={v =>
+                  onValueChange={(v) =>
                     handleWallpaperChange(selectedId, v === NONE ? null : v)
                   }
                 >
                   <SelectTrigger
                     className={cn(
                       "h-8 w-full text-sm",
-                      quickstartStep === "wallpaper" && HIGHLIGHT
+                      quickstartStep === "wallpaper" && HIGHLIGHT,
                     )}
                   >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NONE}>
-                      <span className="italic text-muted-foreground">{t("editor.none")}</span>
+                      <span className="italic text-muted-foreground">
+                        {t("editor.none")}
+                      </span>
                     </SelectItem>
                     {Array.from(wallpaperMap.entries()).map(([id, wp]) => (
                       <SelectItem key={id} value={id}>
                         <span className="flex items-baseline gap-2">
                           <span>{wp.name}</span>
-                          <span className="text-xs text-muted-foreground font-mono">({id})</span>
+                          <span className="text-xs text-muted-foreground font-mono">
+                            ({id})
+                          </span>
                         </span>
                       </SelectItem>
                     ))}
@@ -728,7 +812,9 @@ export function WallpaperEditor() {
               {selManifest && (
                 <div className="space-y-4">
                   {grouped.size === 0 ? (
-                    <p className="text-sm text-muted-foreground">{t("editor.noFields")}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t("editor.noFields")}
+                    </p>
                   ) : (
                     Array.from(grouped.entries()).map(([group, fields]) => (
                       <div key={group} className="space-y-3">
@@ -744,7 +830,9 @@ export function WallpaperEditor() {
                             fieldKey={key}
                             field={field}
                             value={selMonitor?.config?.[key]}
-                            onChange={v => handleFieldChange(selectedId, key, v)}
+                            onChange={(v) =>
+                              handleFieldChange(selectedId, key, v)
+                            }
                           />
                         ))}
                       </div>

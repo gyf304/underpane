@@ -10,7 +10,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 
 if (window.location.pathname === "/background.html") {
-	(window as any).__TAURI__.event.emit('init');
+  (window as any).__TAURI__.event.emit("init");
 } else {
   const elem = document.getElementById("root")!;
   const app = (
