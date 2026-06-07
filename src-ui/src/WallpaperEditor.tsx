@@ -21,11 +21,10 @@ import {
   type WallpaperConfigSchema,
   type SaveStatus,
 } from "./WallpaperEditor.types";
-import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir, getAutostart, setAutostart, pickFile } from "./WallpaperEditor.api";
+import { readConfig, writeConfig, listMonitors, wallpapers, openConfigFile, openWallpapersDir, getAutostart, setAutostart, pickFile, pickDirectory } from "./WallpaperEditor.api";
 import { Quickstart, type QuickstartStepId } from "./Quickstart";
 import { InstallWallpaperDialog } from "./InstallWallpaperDialog";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
 
 const QUICKSTART_SEEN_KEY = "underpane.quickstartSeen";
@@ -224,6 +223,41 @@ function ConfigFieldRow({
     );
   }
 
+  if (field.type === "directory") {
+    const path = typeof value === "string" ? value : "";
+    const basename = path
+      ? path.split(/[/\\]/).filter(Boolean).pop() || path
+      : "";
+    return (
+      <div className="space-y-1.5">
+        {labelRow}
+        {field.description && (
+          <p className="text-xs leading-snug text-muted-foreground">{field.description}</p>
+        )}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0"
+            onClick={async () => {
+              const picked = await pickDirectory();
+              if (picked) onChange(picked);
+            }}
+          >
+            {t("editor.chooseFolder")}
+          </Button>
+          <span
+            className="truncate font-mono text-xs text-muted-foreground"
+            title={path || undefined}
+          >
+            {basename || t("editor.noFolderChosen")}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   const hasSlider = field.type === "number" && field.min != null && field.max != null;
   const sliderDisplay = value != null
     ? Number(value)
@@ -359,18 +393,13 @@ export function WallpaperEditor() {
     }
   }, []);
 
-  // Deep-link install requests. The Rust side both emits an `install-request`
-  // event and caches the URL in PENDING_INSTALL_URL; we drain the cache on
-  // mount to cover cold-start launches where the emit fires before this
-  // listener attaches.
+  // Install requests from a deep-link or `.underpane` file open. The Rust side
+  // delays its emit so a cold-start launch doesn't miss this listener.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen<{ source_url: string }>("install-request", (e) => {
       setInstallSourceUrl(e.payload.source_url);
     }).then((u) => { unlisten = u; });
-    invoke<string | null>("take_pending_install_url")
-      .then((url) => { if (url) setInstallSourceUrl(url); })
-      .catch(() => {});
     return () => { unlisten?.(); };
   }, []);
 

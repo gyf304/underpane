@@ -36,6 +36,14 @@
     "resources": {
       "./resources/": ""
     },
+    "fileAssociations": [
+      {
+        "ext": ["underpane"],
+        "name": "Underpane Wallpaper",
+        "description": "Underpane wallpaper bundle",
+        "role": "Viewer"
+      }
+    ],
     "macOS": {
       "signingIdentity": "-"
     }

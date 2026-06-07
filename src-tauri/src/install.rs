@@ -14,6 +14,14 @@ const MAX_COMPRESSED_BYTES: u64 = 100 * 1024 * 1024;
 const EMIT_BYTES_THRESHOLD: u64 = 256 * 1024;
 const EMIT_MS_THRESHOLD: u128 = 100;
 
+/// Where a wallpaper zip comes from, resolved from the `zip_url` scheme.
+enum ZipSource {
+    /// `https://…` — streamed and downloaded by ripunzip.
+    Remote(String),
+    /// `file://…` — an existing local file read directly.
+    Local(PathBuf),
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "phase", rename_all = "lowercase")]
 pub enum InstallProgress {
@@ -193,11 +201,10 @@ impl ripunzip::UnzipProgressReporter for Reporter {
     }
 }
 
-/// Download, extract, validate, and move a wallpaper bundle into the user's
-/// wallpaper directory under `name`. Emits `install-progress` events scoped to
-/// `install_id` throughout. On success also writes `release_name`/`asset_name`
-/// for the registry entry of `name` (the entry's `source_url` must already be
-/// set by the caller).
+/// Download (or read a local `file://` zip), extract, validate, and move a
+/// wallpaper bundle into the user's wallpaper directory under `name`. `zip_url`
+/// is either an `https://` or a `file://` URL. Emits `install-progress` events
+/// scoped to `install_id` throughout.
 pub async fn install_wallpaper(
     app: AppHandle,
     name: String,
@@ -234,24 +241,41 @@ async fn install_inner(
             "invalid wallpaper name '{name}' (allowed: lowercase letters, digits, '-'; cannot start or end with '-')"
         ));
     }
-    if !zip_url.starts_with("https://") {
-        return Err("zip_url must be https://".into());
-    }
+    // Resolve the source up front so a bad URL or missing file fails fast.
+    let url = url::Url::parse(&zip_url).map_err(|e| format!("invalid zip_url: {e}"))?;
+    let source = match url.scheme() {
+        "https" => ZipSource::Remote(zip_url),
+        "file" => {
+            let path = url
+                .to_file_path()
+                .map_err(|()| format!("zip_url is not a local file url: {zip_url}"))?;
+            if !path.is_file() {
+                return Err(format!("file not found: {}", path.display()));
+            }
+            ZipSource::Local(path)
+        }
+        other => return Err(format!("unsupported zip_url scheme '{other}'")),
+    };
 
     let temp_root = app.path().temp_dir().map_err(|e| e.to_string())?;
     let work_dir = temp_root.join(format!("underpane-install-{install_id}"));
     let extracted = work_dir.join("extracted");
     fs::create_dir_all(&extracted).map_err(|e| e.to_string())?;
 
-    // Phase 1: stream-download + extract (ripunzip is sync; run on blocking pool).
+    // Phase 1: download/open + extract (ripunzip is sync; run on blocking pool).
     let reporter = Arc::new(Reporter::new(app.clone(), install_id.clone()));
     let extracted_for_blocking = extracted.clone();
     let reporter_for_blocking = reporter.clone();
-    let zip_url_for_blocking = zip_url.clone();
 
     let unzip_result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let engine = ripunzip::UnzipEngine::for_uri(&zip_url_for_blocking, None, || {})
-            .map_err(|e| format!("download init failed: {e}"))?;
+        let engine = match source {
+            ZipSource::Remote(url) => ripunzip::UnzipEngine::for_uri(&url, None, || {})
+                .map_err(|e| format!("download init failed: {e}"))?,
+            ZipSource::Local(path) => {
+                let file = fs::File::open(&path).map_err(|e| format!("open failed: {e}"))?;
+                ripunzip::UnzipEngine::for_file(file).map_err(|e| format!("read failed: {e}"))?
+            }
+        };
         let compressed = engine.zip_length();
         if compressed > MAX_COMPRESSED_BYTES {
             return Err(format!(

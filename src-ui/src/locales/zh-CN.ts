@@ -15,6 +15,8 @@ const messages: Record<string, string> = {
   "editor.noFields": "没有可配置的字段。",
   "editor.chooseFile": "选择文件…",
   "editor.noFileChosen": "未选择文件",
+  "editor.chooseFolder": "选择文件夹…",
+  "editor.noFolderChosen": "未选择文件夹",
 
   "general.wallpapersDir.label": "壁纸目录",
   "general.wallpapersDir.desc": "从该文件系统路径加载壁纸。",

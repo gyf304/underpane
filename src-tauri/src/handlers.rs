@@ -122,15 +122,6 @@ pub fn get_config(window: Window) -> Result<WallpaperConfig, String> {
 }
 
 #[tauri::command]
-pub fn take_pending_install_url(window: Window) -> Result<Option<String>, String> {
-    require_config_window(&window)?;
-    Ok(crate::PENDING_INSTALL_URL
-        .lock()
-        .ok()
-        .and_then(|mut s| s.take()))
-}
-
-#[tauri::command]
 pub async fn install_wallpaper(
     app: AppHandle,
     window: Window,

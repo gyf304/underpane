@@ -48,12 +48,17 @@ interface WallpaperConfigSchemaFile extends WallpaperConfigSchemaBase {
   extensions?: string[];
 }
 
+interface WallpaperConfigSchemaDirectory extends WallpaperConfigSchemaBase {
+  type: "directory";
+}
+
 export type WallpaperConfigSchema =
   | WallpaperConfigSchemaBool
   | WallpaperConfigSchemaString
   | WallpaperConfigSchemaNumber
   | WallpaperConfigSchemaColor
-  | WallpaperConfigSchemaFile;
+  | WallpaperConfigSchemaFile
+  | WallpaperConfigSchemaDirectory;
 
 export interface WallpaperManifest {
   name: string;

@@ -13,7 +13,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { installWallpaper } from "./WallpaperEditor.api";
 
-const UNDERPANE_HTTPS_PREFIX = "underpane+https://";
 // Mirrors `is_valid_wallpaper_id` in src-tauri/src/config.rs: must be a valid
 // hostname fragment used in the custom protocol host.
 const NAME_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -40,10 +39,10 @@ interface Props {
   onInstalled?: () => void;
 }
 
+// Recover a usable URL from the custom `underpane+https://` scheme; a `file://`
+// source is already usable as-is.
 function innerUrl(sourceUrl: string): string {
-  return sourceUrl.startsWith(UNDERPANE_HTTPS_PREFIX)
-    ? `https://${sourceUrl.slice(UNDERPANE_HTTPS_PREFIX.length)}`
-    : sourceUrl;
+  return sourceUrl.replace(/^underpane\+/, "");
 }
 
 function sanitize(s: string): string {
@@ -59,7 +58,7 @@ function deriveDefaultName(sourceUrl: string): string {
   try {
     const u = new URL(innerUrl(sourceUrl));
     const filename = u.pathname.split("/").filter(Boolean).pop() ?? "wallpaper";
-    return sanitize(filename.replace(/\.zip$/i, ""));
+    return sanitize(decodeURIComponent(filename).replace(/\.(underpane|zip)$/i, ""));
   } catch {
     return "wallpaper";
   }

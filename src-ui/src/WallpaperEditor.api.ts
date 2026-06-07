@@ -38,6 +38,10 @@ export async function pickFile(extensions?: string[]): Promise<string | null> {
   return invoke("pick_file", { extensions });
 }
 
+export async function pickDirectory(): Promise<string | null> {
+  return invoke("pick_directory");
+}
+
 // ─── Wallpaper install ────────────────────────────────────────────────────────
 
 export async function installWallpaper(args: {
