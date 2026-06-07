@@ -24,11 +24,24 @@ type Stage =
   | { kind: "error"; message: string };
 
 type ProgressState =
-  | { phase: "progress"; bytesDone: number; bytesTotal: number | null; filesDone: number; filesTotal: number | null }
+  | {
+      phase: "progress";
+      bytesDone: number;
+      bytesTotal: number | null;
+      filesDone: number;
+      filesTotal: number | null;
+    }
   | { phase: "validate" };
 
 type ProgressEvent =
-  | { phase: "progress"; install_id: string; bytes_done: number; bytes_total: number | null; files_done: number; files_total: number | null }
+  | {
+      phase: "progress";
+      install_id: string;
+      bytes_done: number;
+      bytes_total: number | null;
+      files_done: number;
+      files_total: number | null;
+    }
   | { phase: "validate"; install_id: string }
   | { phase: "done"; install_id: string }
   | { phase: "error"; install_id: string; message: string };
@@ -57,8 +70,10 @@ function sanitize(s: string): string {
 function deriveDefaultName(sourceUrl: string): string {
   try {
     const u = new URL(innerUrl(sourceUrl));
-    const filename = u.pathname.split("/").filter(Boolean).pop() ?? "wallpaper";
-    return sanitize(decodeURIComponent(filename).replace(/\.(underpane|zip)$/i, ""));
+    const filename = decodeURIComponent(
+      u.pathname.split("/").filter(Boolean).pop() ?? "",
+    );
+    return sanitize(filename.split("_")[0] ?? "");
   } catch {
     return "wallpaper";
   }
@@ -76,7 +91,11 @@ function humanBytes(n: number | null | undefined): string {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Props) {
+export function InstallWallpaperDialog({
+  sourceUrl,
+  onClose,
+  onInstalled,
+}: Props) {
   const open = sourceUrl !== null;
   const [name, setName] = useState("");
   const [stage, setStage] = useState<Stage>({ kind: "name" });
@@ -150,7 +169,13 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
 
     setStage({
       kind: "installing",
-      progress: { phase: "progress", bytesDone: 0, bytesTotal: null, filesDone: 0, filesTotal: null },
+      progress: {
+        phase: "progress",
+        bytesDone: 0,
+        bytesTotal: null,
+        filesDone: 0,
+        filesTotal: null,
+      },
     });
 
     try {
@@ -162,7 +187,12 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
   }, [sourceUrl, name, zipUrl, onInstalled]);
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) handleClose();
+      }}
+    >
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Install wallpaper</DialogTitle>
@@ -180,9 +210,13 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
               onChange={(e) => setName(e.target.value)}
               className="font-mono"
             />
-            {nameError && <p className="text-sm text-destructive">{nameError}</p>}
+            {nameError && (
+              <p className="text-sm text-destructive">{nameError}</p>
+            )}
             <DialogFooter>
-              <Button variant="outline" onClick={handleClose}>Cancel</Button>
+              <Button variant="outline" onClick={handleClose}>
+                Cancel
+              </Button>
               <Button onClick={beginInstall} disabled={!!nameError}>
                 Install
               </Button>
@@ -192,16 +226,23 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
 
         {stage.kind === "installing" && (
           <div className="space-y-3">
-            <p className="text-sm">Installing <b>{name}</b>…</p>
+            <p className="text-sm">
+              Installing <b>{name}</b>…
+            </p>
             {stage.progress.phase === "progress" ? (
               <>
                 <progress
                   className="w-full"
-                  value={stage.progress.bytesTotal ? stage.progress.bytesDone : undefined}
+                  value={
+                    stage.progress.bytesTotal
+                      ? stage.progress.bytesDone
+                      : undefined
+                  }
                   max={stage.progress.bytesTotal ?? undefined}
                 />
                 <p className="text-xs text-muted-foreground">
-                  {humanBytes(stage.progress.bytesDone)} / {humanBytes(stage.progress.bytesTotal)}
+                  {humanBytes(stage.progress.bytesDone)} /{" "}
+                  {humanBytes(stage.progress.bytesTotal)}
                   {stage.progress.filesTotal != null
                     ? ` · ${stage.progress.filesDone}/${stage.progress.filesTotal} files`
                     : ""}
@@ -215,7 +256,9 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
 
         {stage.kind === "done" && (
           <div className="space-y-3">
-            <p className="text-sm">Installed <b>{name}</b>.</p>
+            <p className="text-sm">
+              Installed <b>{name}</b>.
+            </p>
             <DialogFooter>
               <Button onClick={handleClose}>Close</Button>
             </DialogFooter>
@@ -226,7 +269,9 @@ export function InstallWallpaperDialog({ sourceUrl, onClose, onInstalled }: Prop
           <div className="space-y-3">
             <p className="text-sm text-destructive">{stage.message}</p>
             <DialogFooter>
-              <Button variant="outline" onClick={handleClose}>Cancel</Button>
+              <Button variant="outline" onClick={handleClose}>
+                Cancel
+              </Button>
               <Button onClick={() => setStage({ kind: "name" })}>Retry</Button>
             </DialogFooter>
           </div>
