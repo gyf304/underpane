@@ -4,7 +4,7 @@
   "version": "0.1.11",
   "identifier": "com.yifangu.underpane",
   "build": {
-    "frontendDist": "../dist-ui",
+    "frontendDist": "../src-ui/dist",
     "devUrl": "http://localhost:3000/",
     "beforeBuildCommand": "cd ../src-ui && bun install && bun run build",
     "beforeDevCommand": "cd ../src-ui && bun install && bun dev"

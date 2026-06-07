@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Discover live wallpapers for Underpane desktop live wallpaper application."
+    />
+    <link rel="icon" type="image/png" href="../../favicon.png" />
+    <title>Underpane — Discover Wallpapers</title>
+    <script>
+      (function () {
+        const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.classList.toggle("dark", isDark);
+      })();
+    </script>
+    <script type="module" src="./index.tsx" async></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

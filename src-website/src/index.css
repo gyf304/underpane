@@ -1,0 +1,92 @@
+@import "../styles/globals.css";
+
+@layer base {
+  :root {
+    @apply font-sans;
+  }
+
+  body {
+    @apply block min-w-[320px] min-h-screen relative m-0 bg-background text-foreground;
+  }
+}
+
+/* subtle grid backdrop */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.4;
+  background:
+    radial-gradient(60% 50% at 50% 0%, var(--muted) 0%, transparent 70%),
+    linear-gradient(to right, var(--border) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px) 0 0 / 48px 48px;
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent 70%);
+  mask-image: linear-gradient(to bottom, black, transparent 70%);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion) {
+  *,
+  ::before,
+  ::after {
+    animation: none !important;
+  }
+}
+
+/* Custom markdown styling for README content */
+.readme-content {
+  @apply leading-relaxed text-neutral-800 dark:text-neutral-300;
+}
+.readme-content > *:first-child {
+  margin-top: 0 !important;
+}
+.readme-content h1 {
+  @apply text-2xl sm:text-3xl font-bold mt-8 mb-4 pb-3 border-b border-border text-foreground;
+}
+.readme-content h2 {
+  @apply text-xl sm:text-2xl font-semibold mt-8 mb-3 pb-1 border-b border-border/50 text-foreground;
+}
+.readme-content h3 {
+  @apply text-lg sm:text-xl font-medium mt-6 mb-2 text-foreground;
+}
+.readme-content p {
+  @apply mb-4 text-base;
+}
+.readme-content a {
+  @apply text-primary font-medium underline hover:opacity-80 transition-opacity;
+}
+.readme-content ul {
+  @apply pl-6 mb-4 list-disc space-y-1 text-base;
+}
+.readme-content ol {
+  @apply pl-6 mb-4 list-decimal space-y-1 text-base;
+}
+.readme-content li {
+  @apply pl-1;
+}
+.readme-content code {
+  @apply px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 font-mono text-sm text-neutral-900 dark:text-neutral-100;
+}
+.readme-content pre {
+  @apply p-4 rounded-lg bg-neutral-100 dark:bg-neutral-800 overflow-x-auto mb-4 border border-border/50;
+}
+.readme-content pre code {
+  @apply p-0 bg-transparent text-sm text-neutral-900 dark:text-neutral-100;
+}
+.readme-content blockquote {
+  @apply pl-4 border-l-4 border-neutral-300 dark:border-neutral-700 italic text-muted-foreground my-4;
+}
+.readme-content img {
+  @apply max-w-full h-auto rounded-lg my-4 border border-border;
+}
+.readme-content table {
+  @apply w-full border-collapse my-6 text-sm;
+}
+.readme-content th {
+  @apply border-b border-border bg-neutral-50 dark:bg-neutral-900/50 p-2 text-left font-semibold;
+}
+.readme-content td {
+  @apply border-b border-border/50 p-2 text-left;
+}
+
