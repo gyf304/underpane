@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { marked } from "marked";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
@@ -18,41 +18,7 @@ import {
 } from "lucide-react";
 import type { Lang } from "@/lib/i18n";
 import type { DiscoverStringKey } from "./i18n";
-
-// Helper to strip "underpane-wallpaper-" prefix and format the repository name
-function formatRepoName(name: string): string {
-  const prefix = "underpane-wallpaper-";
-  if (name.startsWith(prefix)) {
-    const raw = name.slice(prefix.length);
-    return raw
-      .split("-")
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(" ");
-  }
-  return name;
-}
-
-function getWallpaperMeta(description: string | null, repoName: string, lang: Lang) {
-  let name = formatRepoName(repoName);
-  let cleanDesc = description || "";
-
-  if (description) {
-    const jsonMatch = description.match(/\{.*\}/);
-    if (jsonMatch) {
-      try {
-        const meta = JSON.parse(jsonMatch[0]);
-        cleanDesc = description.replace(jsonMatch[0], "").trim();
-        if (meta && meta.name) {
-          name = meta.name[lang] || meta.name[""] || meta.name["en"] || name;
-        }
-      } catch (e) {
-        // Fallback silently on parse error
-      }
-    }
-  }
-
-  return { name, description: cleanDesc };
-}
+import { getWallpaperMeta } from "./meta";
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -103,13 +69,20 @@ interface DiscoverDetailProps {
   onBack: () => void;
 }
 
-export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetailProps) {
+export function DiscoverDetail({
+  repoFullName,
+  lang,
+  t,
+  onBack,
+}: DiscoverDetailProps) {
   const [repo, setRepo] = useState<RepoInfo | null>(null);
   const [readmeHtml, setReadmeHtml] = useState<string>("");
   const [releases, setReleases] = useState<GitHubRelease[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedReleases, setExpandedReleases] = useState<Record<number, boolean>>({});
+  const [expandedReleases, setExpandedReleases] = useState<
+    Record<number, boolean>
+  >({});
   const [modalZipUrl, setModalZipUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -118,9 +91,13 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
       setError(null);
       try {
         // 1. Fetch Repository Info
-        const repoRes = await fetch(`https://api.github.com/repos/${repoFullName}`);
+        const repoRes = await fetch(
+          `https://api.github.com/repos/${repoFullName}`,
+        );
         if (!repoRes.ok) {
-          throw new Error(`Failed to load repository information (${repoRes.status})`);
+          throw new Error(
+            `Failed to load repository information (${repoRes.status})`,
+          );
         }
         const repoData = (await repoRes.json()) as RepoInfo;
         setRepo(repoData);
@@ -142,7 +119,7 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
         for (const filename of readmePaths) {
           try {
             const readmeRes = await fetch(
-              `https://raw.githubusercontent.com/${repoFullName}/${branch}/${filename}`
+              `https://raw.githubusercontent.com/${repoFullName}/${branch}/${filename}`,
             );
             if (readmeRes.ok) {
               readmeText = await readmeRes.text();
@@ -159,12 +136,16 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
           const parsed = await marked.parse(readmeText);
           setReadmeHtml(parsed);
         } else {
-          setReadmeHtml(`<p class="text-muted-foreground italic">No README found for this wallpaper.</p>`);
+          setReadmeHtml(
+            `<p class="text-muted-foreground italic">No README found for this wallpaper.</p>`,
+          );
         }
 
         // 3. Fetch Releases Info
         try {
-          const releasesRes = await fetch(`https://api.github.com/repos/${repoFullName}/releases`);
+          const releasesRes = await fetch(
+            `https://api.github.com/repos/${repoFullName}/releases`,
+          );
           if (releasesRes.ok) {
             const releasesData = (await releasesRes.json()) as GitHubRelease[];
             setReleases(releasesData);
@@ -225,7 +206,9 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
         <div className="p-8 rounded-xl border border-destructive/20 bg-destructive/5 flex flex-col items-center justify-center text-center space-y-4">
           <Info className="size-12 text-destructive" />
           <h2 className="text-xl font-bold">Error Loading Details</h2>
-          <p className="text-muted-foreground max-w-md">{error || "Repository not found."}</p>
+          <p className="text-muted-foreground max-w-md">
+            {error || "Repository not found."}
+          </p>
           <Button onClick={onBack} variant="outline">
             Return to list
           </Button>
@@ -242,7 +225,9 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
 
   if (releases.length > 0 && releases[0]) {
     latestReleaseUrl = releases[0].html_url;
-    const asset = releases[0].assets.find((a) => a.name.endsWith(".underpane.zip"));
+    const asset = releases[0].assets.find((a) =>
+      a.name.endsWith(".underpane.zip"),
+    );
     if (asset) {
       downloadAsset = asset;
     }
@@ -251,7 +236,12 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
   return (
     <div className="space-y-6 py-4 animate-fade-in">
       {/* Back button */}
-      <Button onClick={onBack} variant="ghost" size="sm" className="gap-2 self-start">
+      <Button
+        onClick={onBack}
+        variant="ghost"
+        size="sm"
+        className="gap-2 self-start"
+      >
         <ArrowLeft className="size-4" />
         {t("back_to_list")}
       </Button>
@@ -260,7 +250,11 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b pb-6">
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <img src={repo.owner.avatar_url} alt={repo.owner.login} className="size-5 rounded-full" />
+            <img
+              src={repo.owner.avatar_url}
+              alt={repo.owner.login}
+              className="size-5 rounded-full"
+            />
             <a
               href={repo.owner.html_url}
               target="_blank"
@@ -270,14 +264,22 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
               {repo.owner.login}
             </a>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{meta.name}</h1>
-          <p className="text-muted-foreground text-lg">{meta.description || "No description provided."}</p>
+          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+            {meta.name}
+          </h1>
+          <p className="text-muted-foreground text-lg">
+            {meta.description || "No description provided."}
+          </p>
         </div>
 
         {/* Top actions */}
         <div className="flex items-center gap-3 shrink-0">
           <Button asChild variant="outline" size="lg">
-            <a href={repo.owner.html_url + "/" + repo.name} target="_blank" rel="noreferrer">
+            <a
+              href={repo.owner.html_url + "/" + repo.name}
+              target="_blank"
+              rel="noreferrer"
+            >
               <Github className="mr-2 size-4" />
               {t("view_on_github")}
             </a>
@@ -292,7 +294,11 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
               {t("install_btn")}
             </Button>
           ) : (
-            <Button asChild size="lg" className="bg-primary hover:bg-primary/95 shadow-md">
+            <Button
+              asChild
+              size="lg"
+              className="bg-primary hover:bg-primary/95 shadow-md"
+            >
               <a href={latestReleaseUrl} target="_blank" rel="noreferrer">
                 <Github className="mr-2 size-4" />
                 {t("view_on_github")}
@@ -350,7 +356,9 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
               {repo.license && (
                 <div className="flex justify-between items-center py-1 border-b border-border/50">
                   <span className="text-muted-foreground">License</span>
-                  <span className="font-medium truncate max-w-[150px]">{repo.license.name}</span>
+                  <span className="font-medium truncate max-w-[150px]">
+                    {repo.license.name}
+                  </span>
                 </div>
               )}
               <div className="flex justify-between items-center py-1 border-b border-border/50">
@@ -361,20 +369,22 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                 <span className="text-muted-foreground">Created</span>
                 <span className="flex items-center gap-1">
                   <Calendar className="size-3.5 text-muted-foreground" />
-                  {new Date(repo.created_at).toLocaleDateString(
-                    lang,
-                    { year: "numeric", month: "short", day: "numeric" }
-                  )}
+                  {new Date(repo.created_at).toLocaleDateString(lang, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1">
                 <span className="text-muted-foreground">Last Updated</span>
                 <span className="flex items-center gap-1">
                   <Clock className="size-3.5 text-muted-foreground" />
-                  {new Date(repo.updated_at).toLocaleDateString(
-                    lang,
-                    { year: "numeric", month: "short", day: "numeric" }
-                  )}
+                  {new Date(repo.updated_at).toLocaleDateString(lang, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })}
                 </span>
               </div>
 
@@ -389,11 +399,15 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Size:</span>
-                    <span className="font-medium">{formatFileSize(downloadAsset.size)}</span>
+                    <span className="font-medium">
+                      {formatFileSize(downloadAsset.size)}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Downloads:</span>
-                    <span className="font-medium">{downloadAsset.download_count}</span>
+                    <span className="font-medium">
+                      {downloadAsset.download_count}
+                    </span>
                   </div>
                 </div>
               )}
@@ -416,7 +430,9 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
               ) : (
                 releases.map((release) => {
                   const isExpanded = !!expandedReleases[release.id];
-                  const zipAsset = release.assets.find((a) => a.name.endsWith(".underpane.zip"));
+                  const zipAsset = release.assets.find((a) =>
+                    a.name.endsWith(".underpane.zip"),
+                  );
                   const hasZip = !!zipAsset;
                   return (
                     <div key={release.id} className="p-4 space-y-2">
@@ -426,7 +442,9 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                       >
                         <div className="space-y-0.5 pr-2">
                           <div className="font-semibold text-sm flex items-center gap-1.5">
-                            <span className="text-foreground">{release.tag_name}</span>
+                            <span className="text-foreground">
+                              {release.tag_name}
+                            </span>
                             {hasZip && (
                               <span className="text-[10px] uppercase font-bold tracking-wide px-1.5 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-full border border-emerald-500/20">
                                 ZIP
@@ -436,7 +454,11 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                           <div className="text-[10px] text-muted-foreground">
                             {new Date(release.published_at).toLocaleDateString(
                               lang,
-                              { year: "numeric", month: "short", day: "numeric" }
+                              {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                              },
                             )}
                           </div>
                         </div>
@@ -452,13 +474,17 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                           <div
                             className="readme-content text-xs leading-relaxed max-h-[150px] overflow-y-auto border p-2 rounded bg-neutral-50 dark:bg-neutral-900 border-border/50"
                             dangerouslySetInnerHTML={{
-                              __html: marked.parse(release.body || "*No release notes provided.*") as string,
+                              __html: marked.parse(
+                                release.body || "*No release notes provided.*",
+                              ) as string,
                             }}
                           />
                           <div className="flex flex-col gap-2">
                             {zipAsset && (
                               <Button
-                                onClick={() => setModalZipUrl(zipAsset.browser_download_url)}
+                                onClick={() =>
+                                  setModalZipUrl(zipAsset.browser_download_url)
+                                }
                                 size="sm"
                                 className="w-full h-8 text-[11px]"
                               >
@@ -466,8 +492,17 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                                 {t("install_btn")}
                               </Button>
                             )}
-                            <Button asChild size="sm" variant="outline" className="w-full h-8 text-[11px]">
-                              <a href={release.html_url} target="_blank" rel="noreferrer">
+                            <Button
+                              asChild
+                              size="sm"
+                              variant="outline"
+                              className="w-full h-8 text-[11px]"
+                            >
+                              <a
+                                href={release.html_url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
                                 <Github className="size-3 mr-1" />
                                 Release Notes
                               </a>
@@ -490,7 +525,9 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
           <div className="bg-card border text-card-foreground p-6 rounded-xl max-w-md w-full shadow-2xl relative space-y-4 animate-scale-up">
             <div className="flex items-center gap-3">
               <Info className="size-6 text-primary shrink-0 animate-pulse" />
-              <h3 className="text-xl font-bold tracking-tight">{t("install_modal_title")}</h3>
+              <h3 className="text-xl font-bold tracking-tight">
+                {t("install_modal_title")}
+              </h3>
             </div>
 
             <p className="text-sm text-muted-foreground leading-relaxed">
@@ -515,9 +552,7 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                   className="w-full"
                   onClick={() => setModalZipUrl(null)}
                 >
-                  <a href={modalZipUrl}>
-                    {t("install_modal_fallback")}
-                  </a>
+                  <a href={modalZipUrl}>{t("install_modal_fallback")}</a>
                 </Button>
                 <Button
                   variant="ghost"
@@ -534,7 +569,11 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                 size="sm"
                 className="w-full text-xs text-muted-foreground mt-1 hover:text-foreground"
               >
-                <a href="https://github.com/gyf304/underpane/releases" target="_blank" rel="noreferrer">
+                <a
+                  href="https://github.com/gyf304/underpane/releases"
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   {t("install_modal_get_app")}
                 </a>
               </Button>
