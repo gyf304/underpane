@@ -129,8 +129,10 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
 
         // 2. Fetch README with i18n priorities
         const readmePaths: string[] = [];
-        if (lang === "zh-CN") {
-          readmePaths.push("README.zh-CN.md", "README.zh.md");
+        readmePaths.push(`README.${lang}.md`);
+        const dash = lang.indexOf("-");
+        if (dash !== -1) {
+          readmePaths.push(`README.${lang.slice(0, dash)}.md`);
         }
         readmePaths.push("README.md");
 
@@ -360,7 +362,7 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                 <span className="flex items-center gap-1">
                   <Calendar className="size-3.5 text-muted-foreground" />
                   {new Date(repo.created_at).toLocaleDateString(
-                    lang === "zh-CN" ? "zh-CN" : "en-US",
+                    lang,
                     { year: "numeric", month: "short", day: "numeric" }
                   )}
                 </span>
@@ -370,7 +372,7 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                 <span className="flex items-center gap-1">
                   <Clock className="size-3.5 text-muted-foreground" />
                   {new Date(repo.updated_at).toLocaleDateString(
-                    lang === "zh-CN" ? "zh-CN" : "en-US",
+                    lang,
                     { year: "numeric", month: "short", day: "numeric" }
                   )}
                 </span>
@@ -433,7 +435,7 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                           </div>
                           <div className="text-[10px] text-muted-foreground">
                             {new Date(release.published_at).toLocaleDateString(
-                              lang === "zh-CN" ? "zh-CN" : "en-US",
+                              lang,
                               { year: "numeric", month: "short", day: "numeric" }
                             )}
                           </div>
