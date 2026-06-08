@@ -501,7 +501,7 @@ export function DiscoverDetail({ repoFullName, lang, t, onBack }: DiscoverDetail
                   window.location.href = `underpane+${modalZipUrl}`;
                   setModalZipUrl(null);
                 }}
-                className="w-full bg-primary hover:bg-primary/95 text-white font-medium"
+                className="w-full bg-primary hover:bg-primary/95 font-medium"
               >
                 {t("install_modal_confirm")}
               </Button>
