@@ -71,6 +71,12 @@ pub enum WallpaperConfigSchema {
 pub struct WallpaperManifest {
     pub name: String,
     #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
     pub config: IndexMap<String, WallpaperConfigSchema>,
 }
 

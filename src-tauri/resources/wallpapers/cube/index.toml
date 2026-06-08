@@ -1,4 +1,7 @@
 name = "Cube"
+description = "A 3D raymarched cube with customizable colors and effects. Adapted from a Shadertoy by mrange (CC0). https://www.shadertoy.com/view/3XdXRr"
+author = "mrange"
+license = "CC0"
 
 [config.speed]
 type = "number"

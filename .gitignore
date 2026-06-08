@@ -12,6 +12,7 @@ dist
 dist-ssr
 dist-ui
 dist-website
+playground
 *.local
 
 # Editor directories and files

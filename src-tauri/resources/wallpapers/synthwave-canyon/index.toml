@@ -1,4 +1,7 @@
 name = "Synthwave Canyon"
+description = "A retro synthwave landscape rendered in 3D. Adapted from a Shadertoy by mrange (CC0). https://www.shadertoy.com/view/slcXW8"
+author = "mrange"
+license = "CC0"
 
 [config.speed]
 type = "number"

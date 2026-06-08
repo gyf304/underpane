@@ -62,6 +62,9 @@ export type WallpaperConfigSchema =
 
 export interface WallpaperManifest {
   name: string;
+  description?: string;
+  author?: string;
+  license?: string;
   config: Record<string, WallpaperConfigSchema>;
 }
 

@@ -1,4 +1,5 @@
 name = "Video"
+description = "Play a video file as your wallpaper."
 
 [config.source]
 type = "file"

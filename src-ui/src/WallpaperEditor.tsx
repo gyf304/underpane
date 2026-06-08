@@ -768,7 +768,7 @@ export function WallpaperEditor() {
               {t("editor.selectMonitor")}
             </p>
           ) : (
-            <div className="max-w-lg space-y-6">
+            <div className="max-w-lg space-y-4">
               {/* Wallpaper selector */}
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
@@ -806,6 +806,21 @@ export function WallpaperEditor() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-2">
+                {selManifest?.description && (
+                  <p className="text-sm leading-snug text-muted-foreground">
+                    {selManifest.description}
+                  </p>
+                )}
+                {(selManifest?.author || selManifest?.license) && (
+                  <p className="text-xs leading-snug text-muted-foreground/60">
+                    {selManifest.author}
+                    {selManifest.author && selManifest.license && <> - </>}
+                    {selManifest.license}
+                  </p>
+                )}
               </div>
 
               {/* Config fields */}

@@ -1,0 +1,65 @@
+name = "立方体"
+description = "一个可自定义颜色和效果的 3D 光线追踪立方体。改编自 mrange 的 Shadertoy (CC0)。 https://www.shadertoy.com/view/3XdXRr"
+author = "mrange"
+license = "CC0"
+
+[config.speed]
+type = "number"
+name = "速度"
+group = "动画"
+description = "动画播放速度"
+default = 1.0
+min = 0.0
+max = 5.0
+step = 0.1
+
+[config.fps_limit]
+type = "bool"
+name = "限制帧率"
+group = "性能"
+description = "限制渲染帧率"
+default = false
+
+[config.fps]
+type = "number"
+name = "最大帧率"
+group = "性能"
+description = "启用「限制帧率」时的帧率上限"
+default = 60
+min = 1
+max = 240
+step = 1
+
+[config.scale]
+type = "number"
+name = "渲染比例"
+group = "质量"
+description = "内部渲染分辨率相对于窗口大小的比例；调低可提高性能，但会降低画质。"
+default = 1.0
+min = 0.1
+max = 1.0
+step = 0.05
+
+[config.sharpness]
+type = "number"
+name = "锐度"
+group = "质量"
+description = "对比度自适应锐化强度，用于升采样时增强画面；设为 0 可关闭锐化。"
+default = 0.8
+min = 0.0
+max = 1.0
+step = 0.05
+
+[config.pause_when_hidden]
+type = "bool"
+name = "隐藏时暂停"
+group = "性能"
+description = "桌面被其他窗口完全遮挡时停止动画"
+default = false
+
+[config.color]
+type = "color"
+name = "颜色"
+group = "外观"
+description = "场景主题色：重新着色辉光、天空、地面和反射。"
+default = "#1c39ff"

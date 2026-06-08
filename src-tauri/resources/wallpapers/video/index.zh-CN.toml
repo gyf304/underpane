@@ -1,0 +1,47 @@
+name = "视频"
+description = "将视频文件作为壁纸播放。"
+
+[config.source]
+type = "file"
+name = "视频文件"
+group = "源文件"
+description = "用作壁纸播放的视频文件。"
+extensions = ["mp4", "webm", "mov", "m4v", "ogv", "ogg"]
+
+[config.fill_screen]
+type = "bool"
+name = "全屏填充"
+group = "显示"
+description = "裁剪视频以覆盖整个屏幕。关闭则以原始比例显示（留黑边）。"
+default = true
+
+[config.muted]
+type = "bool"
+name = "静音"
+group = "音频"
+description = "静音播放。取消静音可能导致某些系统无法自动播放。"
+default = true
+
+[config.loop]
+type = "bool"
+name = "循环播放"
+group = "播放"
+description = "视频播放完毕后重新开始。"
+default = true
+
+[config.playback_rate]
+type = "number"
+name = "播放速度"
+group = "播放"
+description = "视频播放速度倍率。"
+default = 1.0
+min = 0.1
+max = 4.0
+step = 0.1
+
+[config.pause_when_hidden]
+type = "bool"
+name = "隐藏时暂停"
+group = "性能"
+description = "桌面被其他窗口完全遮挡时暂停播放。"
+default = true
