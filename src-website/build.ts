@@ -2,6 +2,7 @@
 import plugin from "bun-plugin-tailwind";
 import { existsSync } from "fs";
 import { rm } from "fs/promises";
+import { renderToString } from "react-dom/server";
 import path from "path";
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
@@ -141,6 +142,31 @@ const result = await Bun.build({
   },
   ...cliConfig,
 });
+
+// for output htmls, try to pre-render
+const htmls = new Bun.Glob("**/*.html").scanSync(outdir);
+for (const html of htmls) {
+  const htmlContent = await Bun.file(`${outdir}/${html}`).text();
+  // try to import the corresponding tsx file.
+  try {
+    const imported = await import(
+      `./src/pages/${html.replace(/.html$/, ".tsx")}`
+    );
+    const node = imported.default;
+    if (typeof node !== "function" && typeof node !== "object") {
+      throw new TypeError("Imported default is not a function or object");
+    }
+    const rendered = renderToString(node);
+    console.log("html content", htmlContent);
+    const patchedHtmlContent = htmlContent.replaceAll(
+      '<div id="root"></div>',
+      `<div id="root">${rendered}</div>`,
+    );
+    await Bun.write(`${outdir}/${html}`, patchedHtmlContent);
+  } catch (e) {
+    console.error(`Cannot pre-render ${html}: ${e}`);
+  }
+}
 
 const end = performance.now();
 
