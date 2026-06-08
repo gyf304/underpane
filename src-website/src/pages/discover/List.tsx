@@ -9,7 +9,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Star, GitFork, Search, Sparkles, AlertTriangle, ArrowRight } from "lucide-react";
+import {
+  Star,
+  GitFork,
+  Search,
+  Sparkles,
+  AlertTriangle,
+  ArrowRight,
+} from "lucide-react";
 import type { Lang } from "@/lib/i18n";
 import type { DiscoverStringKey } from "./i18n";
 
@@ -32,7 +39,11 @@ interface WallpaperMeta {
   description: string;
 }
 
-function getWallpaperMeta(description: string | null, repoName: string, lang: Lang): WallpaperMeta {
+function getWallpaperMeta(
+  description: string | null,
+  repoName: string,
+  lang: Lang,
+): WallpaperMeta {
   let name = formatRepoName(repoName);
   let cleanDesc = description || "";
 
@@ -44,6 +55,10 @@ function getWallpaperMeta(description: string | null, repoName: string, lang: La
         cleanDesc = description.replace(jsonMatch[0], "").trim();
         if (meta && meta.name) {
           name = meta.name[lang] || meta.name[""] || meta.name["en"] || name;
+        }
+        if (meta && meta.desc) {
+          cleanDesc =
+            meta.desc[lang] || meta.desc[""] || meta.desc["en"] || cleanDesc;
         }
       } catch (e) {
         // Fallback silently if JSON parsing fails
@@ -219,7 +234,7 @@ export function DiscoverList({ lang, t, onSelectRepo }: DiscoverListProps) {
           JSON.stringify({
             timestamp: Date.now(),
             data: items,
-          })
+          }),
         );
 
         setRepos(items);
@@ -249,8 +264,12 @@ export function DiscoverList({ lang, t, onSelectRepo }: DiscoverListProps) {
     <div className="w-full space-y-8 animate-fade-in duration-300">
       {/* Page Title */}
       <div className="text-center sm:text-left space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{t("discover_title")}</h1>
-        <p className="text-muted-foreground max-w-2xl">{t("discover_subtitle")}</p>
+        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+          {t("discover_title")}
+        </h1>
+        <p className="text-muted-foreground max-w-2xl">
+          {t("discover_subtitle")}
+        </p>
       </div>
 
       {/* Info notice about publishing */}
@@ -273,8 +292,13 @@ export function DiscoverList({ lang, t, onSelectRepo }: DiscoverListProps) {
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
-          <span className="text-sm text-muted-foreground hidden md:inline">{t("sort_label")}:</span>
-          <Select value={sortBy} onValueChange={(v) => setSortBy(v as "stars" | "updated")}>
+          <span className="text-sm text-muted-foreground hidden md:inline">
+            {t("sort_label")}:
+          </span>
+          <Select
+            value={sortBy}
+            onValueChange={(v) => setSortBy(v as "stars" | "updated")}
+          >
             <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue />
             </SelectTrigger>
@@ -290,8 +314,14 @@ export function DiscoverList({ lang, t, onSelectRepo }: DiscoverListProps) {
       {error && (
         <div className="flex flex-col items-center justify-center py-16 text-center space-y-4 border rounded-xl bg-destructive/5 border-destructive/20">
           <AlertTriangle className="size-12 text-destructive animate-bounce" />
-          <p className="text-muted-foreground max-w-md font-medium">{t("rate_limit_error")}</p>
-          <Button onClick={() => window.location.reload()} variant="outline" size="sm">
+          <p className="text-muted-foreground max-w-md font-medium">
+            {t("rate_limit_error")}
+          </p>
+          <Button
+            onClick={() => window.location.reload()}
+            variant="outline"
+            size="sm"
+          >
             Retry
           </Button>
         </div>
@@ -301,7 +331,10 @@ export function DiscoverList({ lang, t, onSelectRepo }: DiscoverListProps) {
       {loading && (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map((n) => (
-            <Card key={n} className="overflow-hidden border shadow-sm py-0 gap-0">
+            <Card
+              key={n}
+              className="overflow-hidden border shadow-sm py-0 gap-0"
+            >
               <div className="w-full aspect-video bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
               <CardHeader className="space-y-2 pt-5 pb-2">
                 <div className="h-6 w-2/3 bg-neutral-200 dark:bg-neutral-800 animate-pulse rounded" />
@@ -374,7 +407,7 @@ export function DiscoverList({ lang, t, onSelectRepo }: DiscoverListProps) {
                       <span>
                         {new Date(repo.pushed_at).toLocaleDateString(
                           lang === "zh-CN" ? "zh-CN" : "en-US",
-                          { year: "numeric", month: "short", day: "numeric" }
+                          { year: "numeric", month: "short", day: "numeric" },
                         )}
                       </span>
                     </div>
