@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { marked } from "marked";
+import { Markdown } from "@/components/Markdown";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -76,7 +76,7 @@ export function DiscoverDetail({
   onBack,
 }: DiscoverDetailProps) {
   const [repo, setRepo] = useState<RepoInfo | null>(null);
-  const [readmeHtml, setReadmeHtml] = useState<string>("");
+  const [readmeText, setReadmeText] = useState<string>("");
   const [releases, setReleases] = useState<GitHubRelease[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -132,12 +132,10 @@ export function DiscoverDetail({
         }
 
         if (readmeLoaded) {
-          // Parse README markdown safely using marked
-          const parsed = await marked.parse(readmeText);
-          setReadmeHtml(parsed);
+          setReadmeText(readmeText);
         } else {
-          setReadmeHtml(
-            `<p class="text-muted-foreground italic">No README found for this wallpaper.</p>`,
+          setReadmeText(
+            "*No README found for this wallpaper.*",
           );
         }
 
@@ -320,10 +318,9 @@ export function DiscoverDetail({
               </span>
             </div>
             <CardContent className="p-6 md:p-8">
-              <article
-                className="readme-content"
-                dangerouslySetInnerHTML={{ __html: readmeHtml }}
-              />
+              <Markdown className="readme-content">
+                {readmeText}
+              </Markdown>
             </CardContent>
           </Card>
         </div>
@@ -471,14 +468,9 @@ export function DiscoverDetail({
 
                       {isExpanded && (
                         <div className="pt-2 text-xs text-muted-foreground space-y-3 animate-slide-down">
-                          <div
-                            className="readme-content text-xs leading-relaxed max-h-37.5 overflow-y-auto border p-2 rounded bg-neutral-50 dark:bg-neutral-900 border-border/50"
-                            dangerouslySetInnerHTML={{
-                              __html: marked.parse(
-                                release.body || "*No release notes provided.*",
-                              ) as string,
-                            }}
-                          />
+                          <Markdown className="readme-content text-xs leading-relaxed max-h-37.5 overflow-y-auto border p-2 rounded bg-neutral-50 dark:bg-neutral-900 border-border/50">
+                            {release.body || "*No release notes provided.*"}
+                          </Markdown>
                           <div className="flex flex-col gap-2">
                             {zipAsset && (
                               <Button
