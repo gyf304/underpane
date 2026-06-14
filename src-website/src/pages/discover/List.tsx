@@ -251,7 +251,7 @@ export function DiscoverList({ lang, t, onSelectRepo }: DiscoverListProps) {
             value={sortBy}
             onValueChange={(v) => setSortBy(v as "stars" | "updated")}
           >
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="w-full sm:w-45">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -323,7 +323,7 @@ export function DiscoverList({ lang, t, onSelectRepo }: DiscoverListProps) {
                     />
                   </div>
 
-                  <CardHeader className="space-y-1 pt-5 pb-2 flex-grow">
+                  <CardHeader className="space-y-1 pt-5 pb-2 grow">
                     <div className="flex items-center gap-2 mb-1">
                       <img
                         src={repo.owner.avatar_url}
@@ -336,7 +336,7 @@ export function DiscoverList({ lang, t, onSelectRepo }: DiscoverListProps) {
                     </div>
                     <CardTitle className="text-xl group-hover:text-primary transition-colors duration-200 flex items-center justify-between">
                       <span className="truncate">{repo.metaName}</span>
-                      <ArrowRight className="size-4 shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-x-[-10px] group-hover:translate-x-0 text-primary" />
+                      <ArrowRight className="size-4 shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-300 -translate-x-2.5 group-hover:translate-x-0 text-primary" />
                     </CardTitle>
                   </CardHeader>
 

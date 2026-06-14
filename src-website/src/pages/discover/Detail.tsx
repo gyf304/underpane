@@ -356,7 +356,7 @@ export function DiscoverDetail({
               {repo.license && (
                 <div className="flex justify-between items-center py-1 border-b border-border/50">
                   <span className="text-muted-foreground">License</span>
-                  <span className="font-medium truncate max-w-[150px]">
+                  <span className="font-medium truncate max-w-37.5">
                     {repo.license.name}
                   </span>
                 </div>
@@ -393,7 +393,7 @@ export function DiscoverDetail({
                 <div className="mt-4 p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900 border text-xs space-y-2">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Filename:</span>
-                    <span className="font-mono truncate max-w-[160px] text-right font-medium">
+                    <span className="font-mono truncate max-w-40 text-right font-medium">
                       {downloadAsset.name}
                     </span>
                   </div>
@@ -422,7 +422,7 @@ export function DiscoverDetail({
                 {t("releases_title")}
               </span>
             </div>
-            <CardContent className="p-0 max-h-[380px] overflow-y-auto divide-y">
+            <CardContent className="p-0 max-h-95 overflow-y-auto divide-y">
               {releases.length === 0 ? (
                 <div className="p-6 text-center text-muted-foreground text-sm">
                   {t("no_releases")}
@@ -472,7 +472,7 @@ export function DiscoverDetail({
                       {isExpanded && (
                         <div className="pt-2 text-xs text-muted-foreground space-y-3 animate-slide-down">
                           <div
-                            className="readme-content text-xs leading-relaxed max-h-[150px] overflow-y-auto border p-2 rounded bg-neutral-50 dark:bg-neutral-900 border-border/50"
+                            className="readme-content text-xs leading-relaxed max-h-37.5 overflow-y-auto border p-2 rounded bg-neutral-50 dark:bg-neutral-900 border-border/50"
                             dangerouslySetInnerHTML={{
                               __html: marked.parse(
                                 release.body || "*No release notes provided.*",
