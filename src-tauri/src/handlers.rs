@@ -1,9 +1,8 @@
 use crate::config::{is_valid_wallpaper_id, Config, WallpaperConfig, CONFIG, CONFIG_PATH};
-use crate::desktop_windows::{calc_desktop_visibility, DESKTOP_WINDOWS};
+use crate::desktop_windows::DESKTOP_WINDOWS;
 use crate::install;
 use crate::monitor_info::{current_monitors, MonitorInfo};
 use crate::wallpapers::WallpaperManifest;
-use serde::Serialize;
 use std::collections::BTreeMap;
 use tauri::{AppHandle, Webview, Window};
 use tauri_plugin_autostart::ManagerExt;
@@ -72,20 +71,6 @@ pub fn list_monitors(window: Window) -> Result<Vec<MonitorInfo>, String> {
 pub fn list_wallpapers(window: Window) -> Result<BTreeMap<String, WallpaperManifest>, String> {
     require_config_window(&window)?;
     CONFIG.borrow().wallpapers().map_err(|e| e.to_string())
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Visibility {
-    pub coverage: f64,
-    pub focused: bool,
-}
-
-#[tauri::command]
-pub fn get_visibility(window: Window) -> Result<Visibility, String> {
-    let index = monitor_index_from_label(&window)?;
-    let (coverage, focused) =
-        calc_desktop_visibility(index).ok_or_else(|| "no monitor at index".to_string())?;
-    Ok(Visibility { coverage, focused })
 }
 
 #[tauri::command]

@@ -38,10 +38,10 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 ripunzip = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
+objc2 = { version = "0.6", features = ["exception"] }
 objc2-core-graphics = { version = "0.3", features = ["CGWindowLevel"] }
 objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
-objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWorkspace", "NSRunningApplication", "NSEvent", "NSScreen", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWorkspace", "NSRunningApplication", "NSEvent", "NSGraphicsContext", "NSScreen", "block2"] }
 block2 = "0.6"
 objc2-foundation = "0.3"
 
@@ -49,6 +49,8 @@ objc2-foundation = "0.3"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Accessibility",
     "Win32_UI_HiDpi",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",

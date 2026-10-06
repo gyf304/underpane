@@ -42,6 +42,9 @@ const QUICKSTART_SEEN_KEY = "underpane.quickstartSeen";
 const DEFAULT_KEY = "default";
 const HIGHLIGHT = "ring-2 ring-primary ring-offset-2 ring-offset-background";
 
+// Wallpaper ids hidden from the selector unless they are already in use.
+const SPECIAL_WALLPAPERS = new Set(["debug"]);
+
 const CANVAS_H = 192;
 
 function MonitorCanvas({
@@ -794,16 +797,22 @@ export function WallpaperEditor() {
                         {t("editor.none")}
                       </span>
                     </SelectItem>
-                    {Array.from(wallpaperMap.entries()).map(([id, wp]) => (
-                      <SelectItem key={id} value={id}>
-                        <span className="flex items-baseline gap-2">
-                          <span>{wp.name}</span>
-                          <span className="text-xs text-muted-foreground font-mono">
-                            ({id})
+                    {Array.from(wallpaperMap.entries())
+                      .filter(
+                        ([id]) =>
+                          !SPECIAL_WALLPAPERS.has(id) ||
+                          selMonitor?.wallpaper === id,
+                      )
+                      .map(([id, wp]) => (
+                        <SelectItem key={id} value={id}>
+                          <span className="flex items-baseline gap-2">
+                            <span>{wp.name}</span>
+                            <span className="text-xs text-muted-foreground font-mono">
+                              ({id})
+                            </span>
                           </span>
-                        </span>
-                      </SelectItem>
-                    ))}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>

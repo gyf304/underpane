@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Debug</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                background: #0b0e14;
+                color: #e6e6e6;
+                font:
+                    13px/1.5 ui-monospace,
+                    SFMono-Regular,
+                    Menlo,
+                    Consolas,
+                    monospace;
+            }
+            body {
+                background-image:
+                    linear-gradient(#ffffff0d 1px, transparent 1px),
+                    linear-gradient(90deg, #ffffff0d 1px, transparent 1px);
+                background-size: 64px 64px;
+            }
+            body.hidden-state {
+                background: #2a0b0b;
+            }
+
+            .panel {
+                position: fixed;
+                top: 24px;
+                left: 24px;
+                padding: 16px 18px;
+                min-width: 380px;
+                background: #11151fe6;
+                border: 1px solid #ffffff1f;
+                border-radius: 10px;
+                backdrop-filter: blur(6px);
+            }
+            h1 {
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.14em;
+                text-transform: uppercase;
+                color: #7dd3fc;
+                margin-bottom: 10px;
+            }
+            .coord {
+                font-size: 30px;
+                font-weight: 700;
+                color: #f8fafc;
+                letter-spacing: -0.01em;
+            }
+            .coord .axis {
+                color: #64748b;
+            }
+            dl {
+                display: grid;
+                grid-template-columns: auto 1fr;
+                gap: 2px 14px;
+                margin-top: 12px;
+                border-top: 1px solid #ffffff14;
+                padding-top: 10px;
+            }
+            dt {
+                color: #94a3b8;
+            }
+            dd {
+                color: #e2e8f0;
+                text-align: right;
+            }
+            .ok {
+                color: #4ade80;
+            }
+            .bad {
+                color: #f87171;
+            }
+            .warn {
+                color: #fbbf24;
+            }
+
+            .log {
+                position: fixed;
+                left: 24px;
+                bottom: 24px;
+                width: min(640px, calc(100vw - 48px));
+                max-height: 34vh;
+                overflow: hidden;
+                padding: 10px 14px;
+                background: #11151fe6;
+                border: 1px solid #ffffff1f;
+                border-radius: 10px;
+                color: #cbd5e1;
+                white-space: pre;
+            }
+            .log b {
+                color: #7dd3fc;
+                font-weight: 600;
+            }
+
+            /* Injected-pointer marker, positioned in viewport (CSS px) space. */
+            #dot {
+                position: fixed;
+                left: 0;
+                top: 0;
+                width: 15px;
+                height: 15px;
+                margin: -7.5px 0 0 -7.5px;
+                border-radius: 50%;
+                border: 2px solid #f472b6;
+                background: #f472b655;
+                pointer-events: none;
+                opacity: 0;
+                transition: opacity 120ms;
+            }
+            #dot.on {
+                opacity: 1;
+            }
+            .guide {
+                position: fixed;
+                background: #f472b633;
+                pointer-events: none;
+                opacity: 0;
+            }
+            .guide.on {
+                opacity: 1;
+            }
+            #guide-x {
+                left: 0;
+                right: 0;
+                height: 1px;
+            }
+            #guide-y {
+                top: 0;
+                bottom: 0;
+                width: 1px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="panel">
+            <h1>Underpane Debug</h1>
+            <div class="coord">
+                <span class="axis">x</span> <span id="cx">-</span>
+                &nbsp; <span class="axis">y</span> <span id="cy">-</span>
+            </div>
+            <dl>
+                <dt>host</dt>
+                <dd id="host">-</dd>
+                <dt>visibilityState</dt>
+                <dd id="visibility">-</dd>
+                <dt>hasFocus</dt>
+                <dd id="hasFocus">-</dd>
+                <dt>config hash</dt>
+                <dd id="hash">-</dd>
+                <dt>offset</dt>
+                <dd id="offset">-</dd>
+                <dt>screen</dt>
+                <dd id="screen">-</dd>
+                <dt>movement</dt>
+                <dd id="movement">-</dd>
+                <dt>event</dt>
+                <dd id="eventType">-</dd>
+                <dt>buttons</dt>
+                <dd id="buttons">-</dd>
+                <dt>isTrusted</dt>
+                <dd id="trusted">-</dd>
+                <dt>pointerType</dt>
+                <dd id="pointerType">-</dd>
+                <dt>viewport</dt>
+                <dd id="viewport">-</dd>
+                <dt>devicePixelRatio</dt>
+                <dd id="dpr">-</dd>
+                <dt>mousemove / pointermove</dt>
+                <dd><span id="mouseCount">0</span> / <span id="pointerCount">0</span></dd>
+                <dt>visibility / focus / blur</dt>
+                <dd>
+                    <span id="visCount">0</span> /
+                    <span id="focusCount">0</span> /
+                    <span id="blurCount">0</span>
+                </dd>
+                <dt>moves/sec</dt>
+                <dd id="rate">0</dd>
+                <dt>state</dt>
+                <dd id="state">waiting for events</dd>
+            </dl>
+        </div>
+
+        <div class="log" id="log"></div>
+
+        <div class="guide" id="guide-x"></div>
+        <div class="guide" id="guide-y"></div>
+        <div id="dot"></div>
+
+        <script>
+            const $ = (id) => document.getElementById(id);
+            const tag = `[underpane ${location.host}]`;
+
+            const dot = $("dot");
+            const guideX = $("guide-x");
+            const guideY = $("guide-y");
+
+            let mouseCount = 0;
+            let pointerCount = 0;
+            let visCount = 0;
+            let focusCount = 0;
+            let blurCount = 0;
+            let moveTimestamps = [];
+            let lastLog = 0;
+            let lastMove = 0;
+
+            // Throttle pointer logging so forwarding to the host terminal does not
+            // flood at the raw event rate. Counters still see every event.
+            const LOG_INTERVAL_MS = 150;
+
+            const lines = [];
+            function pushLog(text) {
+                const stamp = new Date().toLocaleTimeString([], {
+                    hour12: false,
+                });
+                lines.push(`${stamp}  ${text}`);
+                if (lines.length > 6) lines.shift();
+                $("log").innerHTML = lines
+                    .map((l) => l.replace(/^(\S+)\s+(.*)$/, "<b>$1</b>  $2"))
+                    .join("\n");
+            }
+
+            function note(text) {
+                console.log(`${tag} ${text}`);
+                pushLog(text);
+            }
+
+            function styleState(el, value, goodWhen) {
+                el.textContent = String(value);
+                el.className = value === goodWhen ? "ok" : "warn";
+            }
+
+            function refreshState() {
+                const visibility = document.visibilityState;
+                const focused = document.hasFocus();
+                styleState($("visibility"), visibility, "visible");
+                styleState($("hasFocus"), focused, true);
+                document.body.classList.toggle("hidden-state", visibility === "hidden");
+                $("hash").textContent = location.hash || "-";
+            }
+
+            function mark(x, y) {
+                dot.style.transform = `translate(${x}px, ${y}px)`;
+                dot.classList.add("on");
+                guideX.style.top = `${y}px`;
+                guideY.style.left = `${x}px`;
+                guideX.classList.add("on");
+                guideY.classList.add("on");
+            }
+
+            function handleMove(event) {
+                const now = performance.now();
+                lastMove = now;
+
+                if (event.type === "pointermove") {
+                    pointerCount++;
+                    $("pointerCount").textContent = pointerCount;
+                    $("pointerType").textContent = event.pointerType || "-";
+                } else {
+                    mouseCount++;
+                    $("mouseCount").textContent = mouseCount;
+                }
+
+                const x = event.clientX;
+                const y = event.clientY;
+                $("cx").textContent = x;
+                $("cy").textContent = y;
+                $("offset").textContent = `${event.offsetX ?? "-"}, ${event.offsetY ?? "-"}`;
+                $("screen").textContent = `${event.screenX ?? "-"}, ${event.screenY ?? "-"}`;
+                $("movement").textContent = `${event.movementX ?? "-"}, ${event.movementY ?? "-"}`;
+                $("eventType").textContent = event.type;
+                $("buttons").textContent = event.buttons ?? "-";
+
+                const trustedEl = $("trusted");
+                trustedEl.textContent = String(event.isTrusted);
+                trustedEl.className = event.isTrusted ? "ok" : "bad";
+
+                $("state").textContent = "receiving";
+                mark(x, y);
+
+                moveTimestamps.push(now);
+                if (moveTimestamps.length > 120) moveTimestamps.shift();
+
+                if (now - lastLog >= LOG_INTERVAL_MS) {
+                    lastLog = now;
+                    note(
+                        `${event.type} client=(${x}, ${y}) movement=(${event.movementX},${event.movementY})` +
+                            ` trusted=${event.isTrusted} visibility=${document.visibilityState} focus=${document.hasFocus()}`,
+                    );
+                }
+            }
+
+            function handleVisibility() {
+                visCount++;
+                $("visCount").textContent = visCount;
+                refreshState();
+                note(`visibilitychange state=${document.visibilityState}`);
+                dot.classList.remove("on");
+                guideX.classList.remove("on");
+                guideY.classList.remove("on");
+            }
+
+            function handleFocus() {
+                focusCount++;
+                $("focusCount").textContent = focusCount;
+                refreshState();
+                note("focus");
+            }
+
+            function handleBlur() {
+                blurCount++;
+                $("blurCount").textContent = blurCount;
+                refreshState();
+                note("blur");
+            }
+
+            document.addEventListener("mousemove", handleMove);
+            document.addEventListener("pointermove", handleMove);
+            document.addEventListener("visibilitychange", handleVisibility);
+            window.addEventListener("focus", handleFocus);
+            window.addEventListener("blur", handleBlur);
+            window.addEventListener("hashchange", () => {
+                refreshState();
+                note(`hashchange ${location.hash || "(empty)"}`);
+            });
+            document.addEventListener("mouseleave", () => {
+                dot.classList.remove("on");
+                guideX.classList.remove("on");
+                guideY.classList.remove("on");
+                $("state").textContent = "cursor left";
+            });
+
+            setInterval(() => {
+                const now = performance.now();
+                moveTimestamps = moveTimestamps.filter((t) => now - t <= 1000);
+                $("rate").textContent = moveTimestamps.length;
+                refreshState();
+                if (lastMove && now - lastMove > 1500) {
+                    $("state").textContent = "idle (no events)";
+                }
+            }, 250);
+
+            $("host").textContent = location.host;
+            $("viewport").textContent = `${innerWidth} x ${innerHeight}`;
+            $("dpr").textContent = devicePixelRatio;
+            refreshState();
+            note(
+                `ready viewport=${innerWidth}x${innerHeight} dpr=${devicePixelRatio}` +
+                    ` visibility=${document.visibilityState} focus=${document.hasFocus()}`,
+            );
+        </script>
+    </body>
+</html>

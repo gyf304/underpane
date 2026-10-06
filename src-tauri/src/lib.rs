@@ -1,6 +1,5 @@
 mod app;
 mod config;
-mod cursor_position;
 mod desktop_windows;
 mod handlers;
 mod install;
@@ -10,7 +9,7 @@ mod protocol;
 mod tray;
 mod utils;
 mod wallpapers;
-mod window_info;
+mod window_daemon;
 
 use std::path::PathBuf;
 
@@ -102,7 +101,6 @@ pub fn run() {
             handlers::open_wallpapers_dir,
             handlers::list_monitors,
             handlers::list_wallpapers,
-            handlers::get_visibility,
             handlers::get_config,
             handlers::get_autostart,
             handlers::set_autostart,

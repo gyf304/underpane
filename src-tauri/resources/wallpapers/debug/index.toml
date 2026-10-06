@@ -1,0 +1,2 @@
+name = "Debug"
+description = "Shows injected pointer events, visibility state, and focus for this desktop window. For development."
