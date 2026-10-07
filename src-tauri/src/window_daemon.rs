@@ -41,18 +41,28 @@ mod imp {
         NSEventType, NSWindowCollectionBehavior, NSWorkspace,
         NSWorkspaceDidActivateApplicationNotification,
     };
-    use objc2_core_foundation::{CGPoint, CGRect};
-    use objc2_core_graphics::{CGWindowLevelForKey, CGWindowLevelKey};
+    use objc2_core_foundation::{
+        CFDictionary, CFNumber, CFNumberType, CFString, CGPoint, CGRect,
+    };
+    use objc2_core_graphics::{
+        CGDisplayBounds, CGError, CGGetActiveDisplayList, CGMainDisplayID,
+        CGRectMakeWithDictionaryRepresentation, CGWindowLevelForKey, CGWindowLevelKey,
+        CGWindowListCopyWindowInfo, CGWindowListOption, kCGNullWindowID, kCGWindowBounds,
+        kCGWindowLayer, kCGWindowOwnerPID,
+    };
     use objc2_foundation::{
         MainThreadMarker, NSNotification, NSOperationQueue, NSPoint, NSProcessInfo,
     };
-    use tauri::{Monitor, WebviewWindow};
+    use tauri::WebviewWindow;
+
+    use crate::monitor_info::Display;
 
     static ORIGINAL_IS_KEY_WINDOW: AtomicUsize = AtomicUsize::new(0);
     static ORIGINAL_OCCLUSION_STATE: AtomicUsize = AtomicUsize::new(0);
     static SWIZZLED: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
     static MOUSE_MONITOR: OnceLock<()> = OnceLock::new();
     static FOCUS_OBSERVER: OnceLock<()> = OnceLock::new();
+    static COVERAGE: OnceLock<()> = OnceLock::new();
     static LOGGED_EXCEPTIONS: AtomicUsize = AtomicUsize::new(0);
 
     /// Fraction of the monitor that must be covered to hide the page.
@@ -102,8 +112,11 @@ mod imp {
         window: usize,
         webview: usize,
         window_number: isize,
+        webview_window: WebviewWindow,
         /// Last visibility applied to the page.
         visible: bool,
+        /// Whether the cursor is currently over this window's display.
+        pointer_inside: bool,
     }
 
     struct NativeWindow {
@@ -127,25 +140,23 @@ mod imp {
     impl WindowDaemon {
         pub fn new(
             window: &WebviewWindow,
-            monitor: &Monitor,
-            _index: usize,
+            _monitor: &Display,
+            index: usize,
         ) -> Result<Self, tauri::Error> {
             let daemon = Arc::new(NativeWindow {
                 handle: Arc::new(Mutex::new(None)),
             });
 
             let owned_window = window.clone();
-            let monitor = monitor.clone();
             let handle = daemon.handle.clone();
             window.run_on_main_thread(move || {
-                if let Err(e) = set_window_as_background(&owned_window, &monitor) {
+                if let Err(e) = set_window_as_background(&owned_window, index) {
                     eprintln!("underpane: failed to set window as background: {e}");
                 }
                 capture(&owned_window, handle);
             })?;
 
-            // Coverage has no OS event; poll it (focus stays event-based).
-            let _ = tauri::async_runtime::spawn(coverage_loop(Arc::downgrade(&daemon)));
+            ensure_coverage();
 
             Ok(Self(daemon))
         }
@@ -186,12 +197,7 @@ mod imp {
     /// Reflects the current focus onto every desktop window.
     fn dispatch_focus() {
         let focused = desktop_has_focus();
-        let handles: Vec<Arc<Mutex<Option<Handle>>>> = {
-            let mut registry = REGISTRY.lock().unwrap();
-            registry.retain(|weak| weak.strong_count() > 0);
-            registry.iter().filter_map(|weak| weak.upgrade()).collect()
-        };
-        for handle in handles {
+        for handle in handles() {
             apply_focused(&handle, focused);
         }
     }
@@ -200,28 +206,26 @@ mod imp {
     /// and the `focus`/`blur` events natively. Main thread.
     fn apply_focused(handle: &Arc<Mutex<Option<Handle>>>, focused: bool) {
         guard(|| {
-            let Ok(slot) = handle.lock() else {
-                return;
-            };
-            let Some(handle) = slot.as_ref() else {
-                return;
-            };
-            let window = handle.window as *const AnyObject;
-            let webview = handle.webview as *const AnyObject;
-            unsafe {
-                let responder = if focused {
-                    Some(&*webview)
-                } else {
-                    None::<&AnyObject>
-                };
-                let _: () = msg_send![window, makeFirstResponder: responder];
-            }
+            with_handle(handle, |handle| {
+                let window = handle.window as *const AnyObject;
+                let webview = handle.webview as *const AnyObject;
+                unsafe {
+                    let responder = if focused {
+                        Some(&*webview)
+                    } else {
+                        None::<&AnyObject>
+                    };
+                    let _: () = msg_send![window, makeFirstResponder: responder];
+                }
+            });
         });
     }
 
     /// Captures the webview, marks the window as one we manage, and nudges
     /// WebKit to recompute the page's activity state.
     fn capture(window: &WebviewWindow, handle: Arc<Mutex<Option<Handle>>>) {
+        let window = window.clone();
+        let eval_window = window.clone();
         let result = window.with_webview(move |webview| unsafe {
             let wk = webview.inner();
             let ns_window = webview.ns_window();
@@ -245,7 +249,9 @@ mod imp {
                 window: addr(ns_window),
                 webview: addr(wk),
                 window_number,
+                webview_window: eval_window,
                 visible: true,
+                pointer_inside: false,
             });
             register(&handle);
             ensure_monitor();
@@ -269,6 +275,22 @@ mod imp {
         registry.push(Arc::downgrade(handle));
     }
 
+    /// Live handles, pruning dead registry entries.
+    fn handles() -> Vec<Arc<Mutex<Option<Handle>>>> {
+        let mut registry = REGISTRY.lock().unwrap();
+        registry.retain(|weak| weak.strong_count() > 0);
+        registry.iter().filter_map(|weak| weak.upgrade()).collect()
+    }
+
+    /// Runs `f` with the live handle, or not at all if it has been invalidated.
+    fn with_handle<R>(
+        handle: &Arc<Mutex<Option<Handle>>>,
+        f: impl FnOnce(&mut Handle) -> R,
+    ) -> Option<R> {
+        let mut slot = handle.lock().ok()?;
+        Some(f(slot.as_mut()?))
+    }
+
     /// Installs the app-global mouse monitor once. Its handler runs on the main
     /// thread, so it can drive WebKit directly.
     fn ensure_monitor() {
@@ -290,27 +312,47 @@ mod imp {
     }
 
     fn on_mouse_move() {
-        let handles: Vec<Arc<Mutex<Option<Handle>>>> = {
-            let mut registry = REGISTRY.lock().unwrap();
-            registry.retain(|weak| weak.strong_count() > 0);
-            registry.iter().filter_map(|weak| weak.upgrade()).collect()
-        };
-        for handle in handles {
+        for handle in handles() {
             // Hold the lock across injection so `Drop` cannot race us.
-            let Ok(mut guard) = handle.lock() else {
-                continue;
-            };
-            if let Some(handle) = guard.as_mut() {
-                inject(handle);
-            }
+            with_handle(&handle, dispatch_pointer);
         }
     }
 
-    /// Injects the pointer into the window using its own native frame and the
-    /// current mouse location, so no monitor bookkeeping is needed. WebKit's
-    /// mouse-move hit testing drives hover enter/leave itself, so a single move
-    /// (even outside the viewport, which clears hover) suffices.
-    fn inject(handle: &Handle) {
+    /// Drives the page's pointer from the current mouse position. Moves are
+    /// forwarded only while the cursor is over this window's display; leaving is
+    /// signalled explicitly, mirroring the Windows path. WebKit drops a
+    /// `mouseMoved` whose location is outside the visible rect when the view is
+    /// first responder (which it is here), so it never fires the DOM leave on
+    /// its own.
+    fn dispatch_pointer(handle: &mut Handle) {
+        let (screen, frame) = unsafe {
+            let screen: CGPoint = msg_send![class!(NSEvent), mouseLocation];
+            let frame: CGRect = msg_send![handle.window as *const AnyObject, frame];
+            (screen, frame)
+        };
+        let inside = screen.x >= frame.origin.x
+            && screen.x < frame.origin.x + frame.size.width
+            && screen.y >= frame.origin.y
+            && screen.y < frame.origin.y + frame.size.height;
+        // Window base coordinates (bottom-left origin) are exactly what the
+        // events want; the WKWebView fills the window.
+        let location = NSPoint {
+            x: screen.x - frame.origin.x,
+            y: screen.y - frame.origin.y,
+        };
+
+        if inside {
+            handle.pointer_inside = true;
+            inject_move(handle, location);
+        } else if handle.pointer_inside {
+            handle.pointer_inside = false;
+            inject_exit(handle, location);
+        }
+    }
+
+    /// Forwards a pointer move into the window. WebKit's hit testing then drives
+    /// hover within the page.
+    fn inject_move(handle: &Handle, location: NSPoint) {
         let webview = handle.webview as *const AnyObject;
         let responds: Bool =
             unsafe { msg_send![webview, respondsToSelector: sel!(_simulateMouseMove:)] };
@@ -318,14 +360,6 @@ mod imp {
             return;
         }
         unsafe {
-            let screen: CGPoint = msg_send![class!(NSEvent), mouseLocation];
-            let frame: CGRect = msg_send![handle.window as *const AnyObject, frame];
-            // Window base coordinates (bottom-left origin) are exactly what the
-            // event wants; the WKWebView fills the window.
-            let location = NSPoint {
-                x: screen.x - frame.origin.x,
-                y: screen.y - frame.origin.y,
-            };
             let timestamp = NSProcessInfo::processInfo().systemUptime();
             let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
                 NSEventType::MouseMoved,
@@ -344,19 +378,86 @@ mod imp {
         }
     }
 
-    /// Stretches `window` over `monitor` at `kCGDesktopWindowLevel + 1` (above
-    /// the wallpaper, below Finder icons and all application windows) and makes
-    /// it a borderless accessory window.
-    fn set_window_as_background(window: &WebviewWindow, monitor: &Monitor) -> anyhow::Result<()> {
+    /// Signals that the cursor left the window so the page clears hover and
+    /// fires `mouseout`/`mouseleave`. `_simulateMouseExit:` reaches WebKit's
+    /// `mouseExited`, which, unlike `mouseMoved`, does not drop out-of-view
+    /// positions; it is the analogue of the Windows path's CDP move sent
+    /// outside the viewport. WebKit only fires `mouseleave` on elements in the
+    /// hover chain, never on `document`, so a document-level `mouseleave` is
+    /// dispatched too for pages that listen there.
+    fn inject_exit(handle: &Handle, location: NSPoint) {
+        let _ = handle.webview_window.eval(
+            "try{document.dispatchEvent(new MouseEvent('mouseleave',{bubbles:false,cancelable:false}));}catch(e){}",
+        );
+
+        let webview = handle.webview as *const AnyObject;
+        let responds: Bool =
+            unsafe { msg_send![webview, respondsToSelector: sel!(_simulateMouseExit:)] };
+        if !responds.as_bool() {
+            return;
+        }
+        unsafe {
+            let timestamp = NSProcessInfo::processInfo().systemUptime();
+            let event = NSEvent::enterExitEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_trackingNumber_userData(
+                NSEventType::MouseExited,
+                location,
+                NSEventModifierFlags::empty(),
+                timestamp,
+                handle.window_number,
+                None,
+                0,
+                0,
+                std::ptr::null_mut(),
+            );
+            if let Some(event) = event {
+                let _: () = msg_send![webview, _simulateMouseExit: &*event];
+            }
+        }
+    }
+
+    /// The display at `index`'s frame in AppKit's global coordinate space
+    /// (points, bottom-left origin). CoreGraphics reports displays in a
+    /// top-left space, so the y axis is flipped about the primary display.
+    fn display_frame(index: usize) -> Option<CGRect> {
+        let mut count = 0u32;
+        if unsafe { CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut count) } != CGError::Success
+        {
+            return None;
+        }
+        let mut ids = vec![0u32; count as usize];
+        if unsafe { CGGetActiveDisplayList(count, ids.as_mut_ptr(), &mut count) } != CGError::Success
+        {
+            return None;
+        }
+        let id = *ids.get(index)?;
+
+        let bounds = CGDisplayBounds(id);
+        let primary_height = CGDisplayBounds(CGMainDisplayID()).size.height;
+        Some(CGRect {
+            origin: CGPoint {
+                x: bounds.origin.x,
+                y: primary_height - (bounds.origin.y + bounds.size.height),
+            },
+            size: bounds.size,
+        })
+    }
+
+    /// Stretches `window` over the display at `index` at
+    /// `kCGDesktopWindowLevel + 1` (above the wallpaper, below Finder icons and
+    /// all application windows) and makes it a borderless accessory window.
+    ///
+    /// The frame is set through AppKit in points rather than Tauri's
+    /// physical-pixel API: the latter converts using the window's *current*
+    /// backing scale, which is wrong when the target display has a different
+    /// scale. Using `fullscreen: true` instead would move the window to its own
+    /// Space.
+    fn set_window_as_background(window: &WebviewWindow, index: usize) -> anyhow::Result<()> {
         let mtm = MainThreadMarker::new()
             .ok_or_else(|| anyhow::anyhow!("must be called on the main thread"))?;
         let ns_app = NSApplication::sharedApplication(mtm);
 
-        // Use Tauri's monitor API rather than `fullscreen: true` so the window
-        // stays in the normal window level hierarchy and doesn't enter macOS
-        // fullscreen mode (which would move it to its own Space).
-        window.set_size(*monitor.size())?;
-        window.set_position(*monitor.position())?;
+        let frame =
+            display_frame(index).ok_or_else(|| anyhow::anyhow!("invalid monitor index {index}"))?;
 
         let ns_window = window.ns_window()? as *mut AnyObject;
         unsafe {
@@ -373,6 +474,9 @@ mod imp {
             let _: () = msg_send![ns_window, setStyleMask: 0usize];
 
             let _: () =
+                msg_send![ns_window, setFrame: frame, display: Bool::YES, animate: Bool::NO];
+
+            let _: () =
                 msg_send![&*ns_app, setActivationPolicy: NSApplicationActivationPolicy::Accessory];
         }
 
@@ -387,44 +491,38 @@ mod imp {
         let _: () = unsafe { msg_send![center, postNotificationName: name, object: window] };
     }
 
-    /// Recomputes coverage on a timer and reflects it onto the page. There is no
-    /// OS event for "the desktop got covered", so this is a poll.
-    async fn coverage_loop(weak: Weak<NativeWindow>) {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let Some(daemon) = weak.upgrade() else { break };
-            let handle = daemon.handle.clone();
-            let _ = crate::app::APP_HANDLE.run_on_main_thread(move || {
-                guard(|| {
-                    if let Some(visible) = compute_visible(&handle) {
-                        apply_visible(&handle, visible);
-                    }
-                });
+    /// Polls desktop coverage and reflects it onto every page. There is no OS
+    /// event for "the desktop got covered", so this is a poll. Installed once
+    /// for the whole process, like the mouse monitor and focus observer.
+    fn ensure_coverage() {
+        COVERAGE.get_or_init(|| {
+            tauri::async_runtime::spawn(async {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    let handles = handles();
+                    let _ = crate::app::APP_HANDLE.run_on_main_thread(move || {
+                        for handle in handles {
+                            guard(|| refresh_visibility(&handle));
+                        }
+                    });
+                }
             });
-        }
-    }
-
-    fn compute_visible(handle: &Arc<Mutex<Option<Handle>>>) -> Option<bool> {
-        let guard = handle.lock().ok()?;
-        let handle = guard.as_ref()?;
-        let coverage = monitor_coverage(handle.window as *const AnyObject)?;
-        Some(coverage < COVERAGE_THRESHOLD)
+        });
     }
 
     /// Makes WebKit treat the page as hidden or visible, which drives
     /// `document.visibilityState` and `visibilitychange` natively. Main thread.
-    fn apply_visible(handle: &Arc<Mutex<Option<Handle>>>, visible: bool) {
-        guard(|| {
-            let Ok(mut slot) = handle.lock() else {
+    fn refresh_visibility(handle: &Arc<Mutex<Option<Handle>>>) {
+        with_handle(handle, |handle| {
+            let Some(coverage) = monitor_coverage(handle.window as *const AnyObject) else {
                 return;
             };
-            let Some(handle) = slot.as_mut() else {
-                return;
-            };
+            let visible = coverage < COVERAGE_THRESHOLD;
             if handle.visible == visible {
                 return;
             }
             handle.visible = visible;
+
             let window = handle.window as *const AnyObject;
             unsafe {
                 let number: *mut AnyObject =
@@ -440,47 +538,22 @@ mod imp {
         });
     }
 
+    /// Reads the `i32` at `key` from a CoreGraphics window-info dictionary.
+    unsafe fn window_info_i32(info: &CFDictionary, key: &CFString) -> Option<i32> {
+        let value = unsafe { info.value(key as *const CFString as *const c_void) };
+        if value.is_null() {
+            return None;
+        }
+        let number = unsafe { &*(value as *const CFNumber) };
+        let mut out = 0i32;
+        unsafe { number.value(CFNumberType::SInt32Type, &mut out as *mut i32 as *mut c_void) }
+            .then_some(out)
+    }
+
     /// Fraction of the window's monitor covered by other applications' normal
     /// windows. Uses the window's own frame as the monitor rect (no monitor
     /// bookkeeping) and CoreGraphics' on-screen window list.
     fn monitor_coverage(ns_window: *const AnyObject) -> Option<f64> {
-        type CFTypeRef = *const c_void;
-        type CFDictionaryRef = *const c_void;
-        type CFIndex = isize;
-        type CGWindowID = u32;
-
-        #[allow(non_upper_case_globals)]
-        const kCFNumberSInt32Type: isize = 3;
-        #[allow(non_upper_case_globals)]
-        const kCGWindowListOptionOnScreenOnly: u32 = 1 << 0;
-        #[allow(non_upper_case_globals)]
-        const kCGWindowListExcludeDesktopElements: u32 = 1 << 4;
-        #[allow(non_upper_case_globals)]
-        const kCGNullWindowID: CGWindowID = 0;
-
-        extern "C" {
-            static kCGWindowLayer: *const c_void;
-            static kCGWindowBounds: *const c_void;
-            static kCGWindowOwnerPID: *const c_void;
-            fn CFArrayGetCount(arr: CFTypeRef) -> CFIndex;
-            fn CFArrayGetValueAtIndex(arr: CFTypeRef, idx: CFIndex) -> CFTypeRef;
-            fn CFDictionaryGetValue(dict: CFDictionaryRef, key: *const c_void) -> CFTypeRef;
-            fn CFNumberGetValue(number: CFTypeRef, the_type: isize, value: *mut c_void) -> bool;
-            fn CFRelease(cf: CFTypeRef);
-            fn CGWindowListCopyWindowInfo(option: u32, relative_to: CGWindowID) -> CFTypeRef;
-            fn CGRectMakeWithDictionaryRepresentation(dict: CFDictionaryRef, rect: *mut CGRect)
-                -> bool;
-        }
-
-        struct Owned(CFTypeRef);
-        impl Drop for Owned {
-            fn drop(&mut self) {
-                if !self.0.is_null() {
-                    unsafe { CFRelease(self.0) };
-                }
-            }
-        }
-
         unsafe {
             let frame: CGRect = msg_send![ns_window, frame];
             let primary: *mut AnyObject = msg_send![class!(NSScreen), mainScreen];
@@ -500,58 +573,46 @@ mod imp {
                 primary_frame.size.height - (frame.origin.y + frame.size.height),
             );
 
-            let list = Owned(CGWindowListCopyWindowInfo(
-                kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+            let Some(list) = CGWindowListCopyWindowInfo(
+                CGWindowListOption::OptionOnScreenOnly
+                    | CGWindowListOption::ExcludeDesktopElements,
                 kCGNullWindowID,
-            ));
-            if list.0.is_null() {
+            ) else {
                 return Some(0.0);
-            }
+            };
 
             let normal = CGWindowLevelForKey(CGWindowLevelKey::NormalWindowLevelKey);
             let torn_off = CGWindowLevelForKey(CGWindowLevelKey::TornOffMenuWindowLevelKey);
             let our_pid = std::process::id() as i32;
 
-            let count = CFArrayGetCount(list.0);
             let mut clipped: Vec<(f64, f64, f64, f64)> = Vec::new();
-            for i in 0..count {
-                let info = CFArrayGetValueAtIndex(list.0, i) as CFDictionaryRef;
+            for i in 0..list.count() {
+                let info = list.value_at_index(i) as *const CFDictionary;
+                if info.is_null() {
+                    continue;
+                }
+                let info = &*info;
 
-                let layer_ref = CFDictionaryGetValue(info, kCGWindowLayer);
-                if layer_ref.is_null() {
+                let Some(layer) = window_info_i32(info, kCGWindowLayer) else {
                     continue;
-                }
-                let mut layer: i32 = 0;
-                if !CFNumberGetValue(
-                    layer_ref,
-                    kCFNumberSInt32Type,
-                    &mut layer as *mut i32 as *mut c_void,
-                ) {
-                    continue;
-                }
+                };
                 if layer < normal || layer >= torn_off {
                     continue;
                 }
 
-                let pid_ref = CFDictionaryGetValue(info, kCGWindowOwnerPID);
-                if !pid_ref.is_null() {
-                    let mut pid: i32 = 0;
-                    if CFNumberGetValue(
-                        pid_ref,
-                        kCFNumberSInt32Type,
-                        &mut pid as *mut i32 as *mut c_void,
-                    ) && pid == our_pid
-                    {
-                        continue;
-                    }
+                if window_info_i32(info, kCGWindowOwnerPID) == Some(our_pid) {
+                    continue;
                 }
 
-                let bounds = CFDictionaryGetValue(info, kCGWindowBounds) as CFDictionaryRef;
+                let bounds = info.value(kCGWindowBounds as *const CFString as *const c_void);
                 if bounds.is_null() {
                     continue;
                 }
                 let mut rect = MaybeUninit::<CGRect>::uninit();
-                if !CGRectMakeWithDictionaryRepresentation(bounds, rect.as_mut_ptr()) {
+                if !CGRectMakeWithDictionaryRepresentation(
+                    Some(&*(bounds as *const CFDictionary)),
+                    rect.as_mut_ptr(),
+                ) {
                     continue;
                 }
                 let rect = rect.assume_init();
