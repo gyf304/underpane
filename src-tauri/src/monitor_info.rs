@@ -83,7 +83,99 @@ mod native {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+mod native {
+    use tauri::{PhysicalPosition, PhysicalSize};
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{LPARAM, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
+    };
+
+    /// One active display, in physical pixels. Tauri's `available_monitors`
+    /// reports a per-monitor scale factor that can lag the actual DPI (a
+    /// reparented window inherits its parent's), so the scale is read from the
+    /// OS instead.
+    #[derive(Clone, PartialEq)]
+    pub struct Display {
+        position: PhysicalPosition<i32>,
+        size: PhysicalSize<u32>,
+        scale_factor: f64,
+    }
+
+    impl Display {
+        pub fn position(&self) -> &PhysicalPosition<i32> {
+            &self.position
+        }
+
+        pub fn size(&self) -> &PhysicalSize<u32> {
+            &self.size
+        }
+
+        pub fn scale_factor(&self) -> f64 {
+            self.scale_factor
+        }
+    }
+
+    pub fn displays() -> Vec<Display> {
+        struct Ctx {
+            displays: Vec<Display>,
+        }
+        unsafe extern "system" fn cb(
+            monitor: HMONITOR,
+            _hdc: HDC,
+            _rect: *mut RECT,
+            lparam: LPARAM,
+        ) -> BOOL {
+            let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
+            if let Some(display) = unsafe { display_of(monitor) } {
+                ctx.displays.push(display);
+            }
+            BOOL(1)
+        }
+
+        let mut ctx = Ctx {
+            displays: Vec::new(),
+        };
+        let _ = unsafe {
+            EnumDisplayMonitors(None, None, Some(cb), LPARAM(&mut ctx as *mut _ as isize))
+        };
+        ctx.displays
+    }
+
+    unsafe fn display_of(monitor: HMONITOR) -> Option<Display> {
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+            return None;
+        }
+        let rect = info.rcMonitor;
+        Some(Display {
+            position: PhysicalPosition::new(rect.left, rect.top),
+            size: PhysicalSize::new(
+                (rect.right - rect.left) as u32,
+                (rect.bottom - rect.top) as u32,
+            ),
+            scale_factor: dpi_scale(monitor),
+        })
+    }
+
+    fn dpi_scale(monitor: HMONITOR) -> f64 {
+        use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+
+        let mut x = 0u32;
+        let mut y = 0u32;
+        if unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut x, &mut y) }.is_ok() && x > 0 {
+            x as f64 / 96.0
+        } else {
+            1.0
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 mod native {
     use tauri::{AppHandle, Monitor};
 
@@ -102,7 +194,12 @@ fn displays(app: &tauri::AppHandle) -> Vec<Display> {
         let _ = app;
         native::displays()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        let _ = app;
+        native::displays()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         native::displays(app)
     }

@@ -758,12 +758,12 @@ mod imp {
 mod imp {
     use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 
-    use tauri::{Monitor, WebviewWindow};
+    use tauri::WebviewWindow;
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
     use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
     use windows::core::PCWSTR;
 
-    use crate::monitor_info::MONITORS;
+    use crate::monitor_info::Display;
 
     static REGISTRY: LazyLock<Mutex<Vec<Weak<Entry>>>> = LazyLock::new(|| Mutex::new(Vec::new()));
     static HOOK: OnceLock<()> = OnceLock::new();
@@ -791,7 +791,7 @@ mod imp {
     impl WindowDaemon {
         pub fn new(
             window: &WebviewWindow,
-            monitor: &Monitor,
+            _monitor: &Display,
             index: usize,
         ) -> Result<Self, tauri::Error> {
             let entry = Arc::new(Entry {
@@ -806,10 +806,9 @@ mod imp {
             ensure_hook();
 
             let owned_window = window.clone();
-            let monitor = monitor.clone();
             let entry_for_setup = entry.clone();
             window.run_on_main_thread(move || {
-                match set_window_as_background(&owned_window, &monitor) {
+                match set_window_as_background(&owned_window, index) {
                     Ok(top_hwnd) => *entry_for_setup.top.lock().unwrap() = top_hwnd,
                     Err(e) => eprintln!("underpane: failed to set window as background: {e}"),
                 }
@@ -820,7 +819,7 @@ mod imp {
             // Visibility has no OS event either; poll the desktop coverage.
             let _ = tauri::async_runtime::spawn(coverage_loop(Arc::downgrade(&entry)));
             // A child of Progman is not repositioned by the OS when the monitor
-            // layout changes, so follow the monitor channel ourselves.
+            // layout changes, so poll and reposition ourselves.
             let _ = tauri::async_runtime::spawn(monitor_loop(Arc::downgrade(&entry)));
 
             Ok(Self(entry))
@@ -971,10 +970,9 @@ mod imp {
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             let Some(entry) = entry.upgrade() else { break };
-            let Some(monitor) = MONITORS.borrow().get(entry.index).cloned() else {
-                continue;
-            };
-            let Some(coverage) = monitor_coverage(&monitor) else {
+            let top = entry.top.lock().map(|guard| *guard).unwrap_or(0);
+            let Some(rect) = window_rect(top) else { continue };
+            let Some(coverage) = coverage_of(rect) else {
                 continue;
             };
             let visible = coverage < COVERAGE_THRESHOLD;
@@ -982,8 +980,8 @@ mod imp {
         }
     }
 
-    /// Fraction of `monitor` covered by other applications' top-level windows.
-    fn monitor_coverage(monitor: &Monitor) -> Option<f64> {
+    /// Fraction of `rect` covered by other applications' top-level windows.
+    fn coverage_of(rect: windows::Win32::Foundation::RECT) -> Option<f64> {
         use windows::Win32::Foundation::{HWND, LPARAM, RECT};
         use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -991,13 +989,14 @@ mod imp {
             GetWindowThreadProcessId, IsIconic, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
         };
 
-        let pos = monitor.position();
-        let size = monitor.size();
-        let (mw, mh) = (size.width as f64, size.height as f64);
+        let (mx, my) = (rect.left as f64, rect.top as f64);
+        let (mw, mh) = (
+            (rect.right - rect.left) as f64,
+            (rect.bottom - rect.top) as f64,
+        );
         if mw <= 0.0 || mh <= 0.0 {
             return None;
         }
-        let (mx, my) = (pos.x as f64, pos.y as f64);
 
         struct Ctx {
             mx: f64,
@@ -1129,46 +1128,53 @@ mod imp {
         area
     }
 
-    /// Repositions the window when the monitor layout changes, since the OS
-    /// does not move a `WS_CHILD` of Progman when its monitor moves.
+    /// Repositions the window when its monitor moves or resizes, since the OS
+    /// does not move a `WS_CHILD` of Progman when its monitor moves. Polled
+    /// because there is no per-monitor move notification.
     async fn monitor_loop(entry: Weak<Entry>) {
-        let mut monitors_rx = MONITORS.clone();
         loop {
-            if monitors_rx.changed().await.is_err() {
-                break;
-            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             let Some(entry) = entry.upgrade() else { break };
-            let Some(monitor) = MONITORS.borrow().get(entry.index).cloned() else {
-                continue;
-            };
             let top = entry.top.lock().map(|guard| *guard).unwrap_or(0);
             if top != 0 {
-                reposition(top, &monitor);
+                reposition(top, entry.index);
             }
         }
     }
 
-    fn reposition(top: isize, monitor: &Monitor) {
+    fn reposition(top: isize, index: usize) {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{
             GetParent, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
         };
+
+        let Some((x, y, w, h)) = monitor_rect(index) else {
+            return;
+        };
+        // Skip unless the window, in screen space, differs from the monitor.
+        if let Some(rect) = window_rect(top) {
+            if rect.left == x
+                && rect.top == y
+                && rect.right - rect.left == w as i32
+                && rect.bottom - rect.top == h as i32
+            {
+                return;
+            }
+        }
 
         let hwnd = HWND(top as *mut std::ffi::c_void);
         let (cx, cy) = match unsafe { GetParent(hwnd) } {
             Ok(parent) if !parent.is_invalid() => client_origin(parent),
             _ => (0, 0),
         };
-        let pos = monitor.position();
-        let size = monitor.size();
         let _ = unsafe {
             SetWindowPos(
                 hwnd,
                 None,
-                pos.x - cx,
-                pos.y - cy,
-                size.width as i32,
-                size.height as i32,
+                x - cx,
+                y - cy,
+                w as i32,
+                h as i32,
                 SWP_NOACTIVATE | SWP_NOZORDER,
             )
         };
@@ -1248,49 +1254,24 @@ mod imp {
         });
     }
 
-    /// Posts a move to each registered window whose monitor contains `(x, y)`.
+    /// Forwards a move to the desktop window whose screen rect contains `(x, y)`,
+    /// clearing hover on the others.
     fn dispatch(x: i32, y: i32) {
-        let entries: Vec<Arc<Entry>> = {
-            let Ok(mut registry) = REGISTRY.lock() else {
-                return;
-            };
-            registry.retain(|weak| weak.strong_count() > 0);
-            registry.iter().filter_map(|weak| weak.upgrade()).collect()
-        };
-        for entry in entries.iter() {
+        for entry in entries() {
             let top = entry.top.lock().map(|guard| *guard).unwrap_or(0);
-            if top == 0 {
-                continue;
-            }
-            let Some((position, size, scale)) = MONITORS
-                .borrow()
-                .get(entry.index)
-                .map(|monitor| {
-                    (
-                        *monitor.position(),
-                        *monitor.size(),
-                        monitor.scale_factor(),
-                    )
-                })
-            else {
-                continue;
-            };
-            let within = x >= position.x
-                && y >= position.y
-                && x < position.x + size.width as i32
-                && y < position.y + size.height as i32;
+            let Some(rect) = window_rect(top) else { continue };
+            let within = x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
             if within {
                 entry
                     .pointer_inside
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                let origin = window_origin(top).unwrap_or((position.x, position.y));
-                inject_pointer(entry, x, y, origin, scale);
+                inject_pointer(&entry, x, y, (rect.left, rect.top), 1.0);
             } else if entry
                 .pointer_inside
                 .swap(false, std::sync::atomic::Ordering::Relaxed)
             {
                 // Clear hover when the cursor leaves this monitor.
-                inject_leave(entry);
+                inject_leave(&entry);
             }
         }
     }
@@ -1334,16 +1315,67 @@ mod imp {
         dispatch_mouse(&entry.window, -1.0, -1.0);
     }
 
-    /// Screen-space origin of `hwnd`, used to convert a cursor position into the
-    /// webview's viewport coordinates.
-    fn window_origin(hwnd: isize) -> Option<(i32, i32)> {
+    /// Screen-space rect of `hwnd`, or `None` if it is not a live window.
+    fn window_rect(hwnd: isize) -> Option<windows::Win32::Foundation::RECT> {
         use windows::Win32::Foundation::{HWND, RECT};
         use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
         let mut rect = RECT::default();
         unsafe { GetWindowRect(HWND(hwnd as *mut std::ffi::c_void), &mut rect) }
             .ok()
-            .map(|_| (rect.left, rect.top))
+            .map(|_| rect)
+    }
+
+    /// The rect of the display at `index`, enumerated in the same order as
+    /// `monitor_info` (both use `EnumDisplayMonitors`).
+    fn monitor_rect(index: usize) -> Option<(i32, i32, u32, u32)> {
+        use windows::core::BOOL;
+        use windows::Win32::Foundation::{LPARAM, RECT};
+        use windows::Win32::Graphics::Gdi::{
+            EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
+        };
+
+        struct Ctx {
+            index: usize,
+            seen: usize,
+            rect: Option<(i32, i32, u32, u32)>,
+        }
+        unsafe extern "system" fn cb(
+            monitor: HMONITOR,
+            _hdc: HDC,
+            _rect: *mut RECT,
+            lparam: LPARAM,
+        ) -> BOOL {
+            let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
+            if ctx.seen == ctx.index {
+                let mut info = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                if unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+                    let r = info.rcMonitor;
+                    ctx.rect = Some((
+                        r.left,
+                        r.top,
+                        (r.right - r.left) as u32,
+                        (r.bottom - r.top) as u32,
+                    ));
+                }
+                return BOOL(0);
+            }
+            ctx.seen += 1;
+            BOOL(1)
+        }
+
+        let mut ctx = Ctx {
+            index,
+            seen: 0,
+            rect: None,
+        };
+        let _ = unsafe {
+            EnumDisplayMonitors(None, None, Some(cb), LPARAM(&mut ctx as *mut _ as isize))
+        };
+        ctx.rect
     }
 
     /// Screen-space origin of `hwnd`'s client area. `SetWindowPos` positions a
@@ -1362,10 +1394,7 @@ mod imp {
 
     /// Reparents the webview window so it sits between the desktop wallpaper and
     /// the desktop icons. Returns the top-level window.
-    fn set_window_as_background(
-        window: &WebviewWindow,
-        monitor: &Monitor,
-    ) -> anyhow::Result<isize> {
+    fn set_window_as_background(window: &WebviewWindow, index: usize) -> anyhow::Result<isize> {
         use windows::core::{BOOL, PCWSTR};
         use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -1471,8 +1500,8 @@ mod imp {
                 });
             }
 
-            let pos = monitor.position();
-            let size = monitor.size();
+            let (mx, my, mw, mh) = monitor_rect(index)
+                .ok_or_else(|| anyhow::anyhow!("invalid monitor index {index}"))?;
             let z = if !ctx.shell_def_view.is_invalid() {
                 ctx.shell_def_view
             } else {
@@ -1482,10 +1511,10 @@ mod imp {
             let _ = SetWindowPos(
                 hwnd,
                 Some(z),
-                pos.x - cx,
-                pos.y - cy,
-                size.width as i32,
-                size.height as i32,
+                mx - cx,
+                my - cy,
+                mw as i32,
+                mh as i32,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             );
 
