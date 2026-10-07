@@ -6090,6 +6090,7 @@ dependencies = [
  "tokio",
  "toml 0.8.2",
  "url",
+ "webview2-com",
  "windows",
  "winit",
 ]

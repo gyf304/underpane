@@ -698,18 +698,29 @@ mod imp {
     use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 
     use tauri::{Monitor, WebviewWindow};
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
+    use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+    use windows::core::PCWSTR;
 
     use crate::monitor_info::MONITORS;
 
     static REGISTRY: LazyLock<Mutex<Vec<Weak<Entry>>>> = LazyLock::new(|| Mutex::new(Vec::new()));
     static HOOK: OnceLock<()> = OnceLock::new();
 
+    /// Fraction of the monitor that must be covered by other windows to hide
+    /// the page.
+    const COVERAGE_THRESHOLD: f64 = 0.8;
+
     /// Per-window state the OS hooks reach into to post input and focus.
     struct Entry {
         index: usize,
         window: WebviewWindow,
-        /// WebView2's host window, if found; mouse moves are posted to it.
-        child: Mutex<Option<isize>>,
+        /// Top-level Tauri window; input targets are searched from it.
+        top: Mutex<isize>,
+        /// Last time a pointer move was forwarded, to throttle CDP calls.
+        last_inject: Mutex<std::time::Instant>,
+        /// Whether the cursor is currently over this monitor's page.
+        pointer_inside: std::sync::atomic::AtomicBool,
     }
 
     /// Owns one desktop window. Construct to start, drop to stop.
@@ -725,7 +736,9 @@ mod imp {
             let entry = Arc::new(Entry {
                 index,
                 window: window.clone(),
-                child: Mutex::new(None),
+                top: Mutex::new(0),
+                last_inject: Mutex::new(std::time::Instant::now()),
+                pointer_inside: std::sync::atomic::AtomicBool::new(false),
             });
 
             register(&entry);
@@ -736,12 +749,18 @@ mod imp {
             let entry_for_setup = entry.clone();
             window.run_on_main_thread(move || {
                 match set_window_as_background(&owned_window, &monitor) {
-                    Ok(found) => *entry_for_setup.child.lock().unwrap() = found,
+                    Ok(top_hwnd) => *entry_for_setup.top.lock().unwrap() = top_hwnd,
                     Err(e) => eprintln!("underpane: failed to set window as background: {e}"),
                 }
                 // Apply the current focus to the freshly-registered window.
                 dispatch_focus();
             })?;
+
+            // Visibility has no OS event either; poll the desktop coverage.
+            let _ = tauri::async_runtime::spawn(coverage_loop(Arc::downgrade(&entry)));
+            // A child of Progman is not repositioned by the OS when the monitor
+            // layout changes, so follow the monitor channel ourselves.
+            let _ = tauri::async_runtime::spawn(monitor_loop(Arc::downgrade(&entry)));
 
             Ok(Self(entry))
         }
@@ -750,25 +769,27 @@ mod imp {
     /// Whether the desktop holds focus: true when there is no foreground window
     /// or the foreground window is the shell desktop.
     fn desktop_has_focus() -> bool {
+        match foreground_class() {
+            None => true,
+            Some(class) => matches!(
+                class.as_str(),
+                "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+            ),
+        }
+    }
+
+    /// Class of the current foreground window, if any.
+    fn foreground_class() -> Option<String> {
         use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow};
 
         unsafe {
             let hwnd = GetForegroundWindow();
             if hwnd.0.is_null() {
-                return true;
+                return None;
             }
             let mut class_buf = [0u16; 256];
             let n = GetClassNameW(hwnd, &mut class_buf);
-            if n > 0 {
-                let class = String::from_utf16_lossy(&class_buf[..n as usize]);
-                if matches!(
-                    class.as_str(),
-                    "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
-                ) {
-                    return true;
-                }
-            }
-            false
+            (n > 0).then(|| String::from_utf16_lossy(&class_buf[..n as usize]))
         }
     }
 
@@ -776,32 +797,18 @@ mod imp {
     /// foreground-change event (or the initial setup), never on a timer.
     fn dispatch_focus() {
         let focused = desktop_has_focus();
-        let entries: Vec<Arc<Entry>> = {
-            let Ok(mut registry) = REGISTRY.lock() else {
-                return;
-            };
-            registry.retain(|weak| weak.strong_count() > 0);
-            registry.iter().filter_map(|weak| weak.upgrade()).collect()
-        };
-        for entry in entries {
-            let child = *entry.child.lock().unwrap();
-            let window = entry.window.clone();
-            let _ = window.run_on_main_thread(move || set_focus(child, focused));
+        for entry in entries() {
+            apply_focus(&entry, focused);
         }
     }
 
-    fn set_focus(child: Option<isize>, focused: bool) {
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
-
-        let hwnd = if focused {
-            child.map(|child| HWND(child as *mut std::ffi::c_void))
-        } else {
-            None
+    /// Active desktop windows, pruning dead registry entries.
+    fn entries() -> Vec<Arc<Entry>> {
+        let Ok(mut registry) = REGISTRY.lock() else {
+            return Vec::new();
         };
-        unsafe {
-            let _ = SetFocus(hwnd);
-        }
+        registry.retain(|weak| weak.strong_count() > 0);
+        registry.iter().filter_map(|weak| weak.upgrade()).collect()
     }
 
     fn register(entry: &Arc<Entry>) {
@@ -810,6 +817,300 @@ mod imp {
         };
         registry.retain(|weak| weak.strong_count() > 0);
         registry.push(Arc::downgrade(entry));
+    }
+
+    /// Runs `f` with the window's webview controller. `with_webview` marshals
+    /// to the main thread, so this is safe to call from any thread.
+    fn with_controller(
+        window: &WebviewWindow,
+        f: impl FnOnce(&ICoreWebView2Controller) + Send + 'static,
+    ) {
+        let window = window.clone();
+        let _ = window.with_webview(move |webview| f(&webview.controller()));
+    }
+
+    fn call_cdp(controller: &ICoreWebView2Controller, method: &str, params: &str) {
+        unsafe {
+            let Ok(core) = controller.CoreWebView2() else {
+                return;
+            };
+            let method = wide(method);
+            let params = wide(params);
+            let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                |_code, _result| Ok(()),
+            ));
+            let _ = core.CallDevToolsProtocolMethod(
+                PCWSTR(method.as_ptr()),
+                PCWSTR(params.as_ptr()),
+                &handler,
+            );
+        }
+    }
+
+    fn eval_js(window: &WebviewWindow, expression: String) {
+        let params =
+            serde_json::json!({ "expression": expression, "returnByValue": true }).to_string();
+        with_controller(window, move |controller| {
+            call_cdp(controller, "Runtime.evaluate", &params);
+        });
+    }
+
+    fn dispatch_mouse(window: &WebviewWindow, x: f64, y: f64) {
+        let params = mouse_params(x, y);
+        with_controller(window, move |controller| {
+            call_cdp(controller, "Input.dispatchMouseEvent", &params);
+        });
+    }
+
+    fn mouse_params(x: f64, y: f64) -> String {
+        format!(
+            r#"{{"type":"mouseMoved","x":{x:.2},"y":{y:.2},"button":"none","buttons":0,"clickCount":0}}"#
+        )
+    }
+
+    /// The scale WebView2 input coordinates are expressed in. The webview can
+    /// rasterize at a scale that differs from the monitor's, since WebView2
+    /// inherits the parent window's DPI.
+    fn rasterization_scale(controller: &ICoreWebView2Controller) -> Option<f64> {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller3;
+        use windows::core::Interface;
+
+        let c3 = controller.cast::<ICoreWebView2Controller3>().ok()?;
+        let mut scale = 0.0f64;
+        unsafe { c3.RasterizationScale(&mut scale) }.ok()?;
+        (scale > 0.0).then_some(scale)
+    }
+
+    /// Makes the page report focused (or not) without touching real OS focus,
+    /// so `document.hasFocus()` and the `focus`/`blur` events follow the
+    /// desktop. A child of Progman can never be the active window, and CDP's
+    /// focus emulation cannot be turned back off, so the page's `hasFocus` is
+    /// overridden directly.
+    fn apply_focus(entry: &Entry, focused: bool) {
+        let expr = format!(
+            "(function(){{const f={focused};if(window.__underpaneFocused===f)return;window.__underpaneFocused=f;Object.defineProperty(Document.prototype,'hasFocus',{{configurable:true,value:function(){{return window.__underpaneFocused;}}}});window.dispatchEvent(new Event(f?'focus':'blur'));}})();"
+        );
+        eval_js(&entry.window, expr);
+    }
+
+    /// Marks the page hidden while its monitor is (almost) fully covered by
+    /// other windows. WebView2 exposes no visibility override, so the page's
+    /// `document.visibilityState`/`hidden` are shimmed and `visibilitychange`
+    /// is dispatched, mirroring the macOS occlusion handling.
+    fn apply_visible(entry: &Entry, visible: bool) {
+        let expr = format!(
+            "(function(){{const v={visible};if(window.__underpaneVisibility===v)return;window.__underpaneVisibility=v;Object.defineProperty(Document.prototype,'visibilityState',{{configurable:true,get:function(){{return window.__underpaneVisibility?'visible':'hidden';}}}});Object.defineProperty(Document.prototype,'hidden',{{configurable:true,get:function(){{return !window.__underpaneVisibility;}}}});document.dispatchEvent(new Event('visibilitychange'));}})();"
+        );
+        eval_js(&entry.window, expr);
+    }
+
+    /// Polls desktop coverage and reflects it onto the page's visibility. There
+    /// is no OS event for "the desktop got covered", so this is a poll.
+    async fn coverage_loop(entry: Weak<Entry>) {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let Some(entry) = entry.upgrade() else { break };
+            let Some(monitor) = MONITORS.borrow().get(entry.index).cloned() else {
+                continue;
+            };
+            let Some(coverage) = monitor_coverage(&monitor) else {
+                continue;
+            };
+            let visible = coverage < COVERAGE_THRESHOLD;
+            apply_visible(&entry, visible);
+        }
+    }
+
+    /// Fraction of `monitor` covered by other applications' top-level windows.
+    fn monitor_coverage(monitor: &Monitor) -> Option<f64> {
+        use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+        use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetClassNameW, GetWindowLongPtrW, GetWindowRect,
+            GetWindowThreadProcessId, IsIconic, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+        };
+
+        let pos = monitor.position();
+        let size = monitor.size();
+        let (mw, mh) = (size.width as f64, size.height as f64);
+        if mw <= 0.0 || mh <= 0.0 {
+            return None;
+        }
+        let (mx, my) = (pos.x as f64, pos.y as f64);
+
+        struct Ctx {
+            mx: f64,
+            my: f64,
+            mw: f64,
+            mh: f64,
+            clipped: Vec<(f64, f64, f64, f64)>,
+        }
+        unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
+            let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
+
+            if !unsafe { IsWindowVisible(hwnd) }.as_bool() || unsafe { IsIconic(hwnd) }.as_bool() {
+                return windows::core::BOOL(1);
+            }
+
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+            if pid == std::process::id() {
+                return windows::core::BOOL(1);
+            }
+
+            // The shell desktop and taskbar are not "covering" windows.
+            let mut class_buf = [0u16; 256];
+            let n = unsafe { GetClassNameW(hwnd, &mut class_buf) };
+            if n > 0 {
+                let class = String::from_utf16_lossy(&class_buf[..n as usize]);
+                if matches!(
+                    class.as_str(),
+                    "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+                ) {
+                    return windows::core::BOOL(1);
+                }
+            }
+
+            let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+            if ex & WS_EX_TOOLWINDOW.0 as isize != 0 {
+                return windows::core::BOOL(1);
+            }
+
+            let mut cloaked = 0u32;
+            let _ = unsafe {
+                DwmGetWindowAttribute(
+                    hwnd,
+                    DWMWA_CLOAKED,
+                    &mut cloaked as *mut u32 as *mut std::ffi::c_void,
+                    std::mem::size_of::<u32>() as u32,
+                )
+            };
+            if cloaked != 0 {
+                return windows::core::BOOL(1);
+            }
+
+            let mut rect = RECT::default();
+            if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
+                return windows::core::BOOL(1);
+            }
+
+            let (rx, ry) = (rect.left as f64, rect.top as f64);
+            let (rw, rh) = (
+                (rect.right - rect.left) as f64,
+                (rect.bottom - rect.top) as f64,
+            );
+            let (mx, my, mw, mh) = (ctx.mx, ctx.my, ctx.mw, ctx.mh);
+            let ix = rx.max(mx);
+            let iy = ry.max(my);
+            let iw = (rx + rw).min(mx + mw) - ix;
+            let ih = (ry + rh).min(my + mh) - iy;
+            if iw > 0.0 && ih > 0.0 {
+                ctx.clipped.push((ix, iy, iw, ih));
+            }
+            windows::core::BOOL(1)
+        }
+
+        let mut ctx = Ctx {
+            mx,
+            my,
+            mw,
+            mh,
+            clipped: Vec::new(),
+        };
+        let _ = unsafe { EnumWindows(Some(cb), LPARAM(&mut ctx as *mut _ as isize)) };
+
+        Some((union_area(&ctx.clipped) / (mw * mh)).clamp(0.0, 1.0))
+    }
+
+    /// Area of the union of axis-aligned rectangles, by a vertical sweep line.
+    fn union_area(rects: &[(f64, f64, f64, f64)]) -> f64 {
+        if rects.is_empty() {
+            return 0.0;
+        }
+        let mut xs: Vec<f64> = Vec::new();
+        for &(x, _y, w, _h) in rects {
+            xs.push(x);
+            xs.push(x + w);
+        }
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let mut area = 0.0;
+        for pair in xs.windows(2) {
+            let (x0, x1) = (pair[0], pair[1]);
+            let width = x1 - x0;
+            if width <= 0.0 {
+                continue;
+            }
+            let mut intervals: Vec<(f64, f64)> = Vec::new();
+            for &(x, y, w, h) in rects {
+                if x <= x0 && x + w >= x1 {
+                    intervals.push((y, y + h));
+                }
+            }
+            if intervals.is_empty() {
+                continue;
+            }
+            intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            let (mut start, mut end) = intervals[0];
+            let mut covered = 0.0;
+            for &(ns, ne) in &intervals[1..] {
+                if ns <= end {
+                    end = end.max(ne);
+                } else {
+                    covered += end - start;
+                    start = ns;
+                    end = ne;
+                }
+            }
+            covered += end - start;
+            area += width * covered;
+        }
+        area
+    }
+
+    /// Repositions the window when the monitor layout changes, since the OS
+    /// does not move a `WS_CHILD` of Progman when its monitor moves.
+    async fn monitor_loop(entry: Weak<Entry>) {
+        let mut monitors_rx = MONITORS.clone();
+        loop {
+            if monitors_rx.changed().await.is_err() {
+                break;
+            }
+            let Some(entry) = entry.upgrade() else { break };
+            let Some(monitor) = MONITORS.borrow().get(entry.index).cloned() else {
+                continue;
+            };
+            let top = entry.top.lock().map(|guard| *guard).unwrap_or(0);
+            if top != 0 {
+                reposition(top, &monitor);
+            }
+        }
+    }
+
+    fn reposition(top: isize, monitor: &Monitor) {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetParent, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+        };
+
+        let hwnd = HWND(top as *mut std::ffi::c_void);
+        let (cx, cy) = match unsafe { GetParent(hwnd) } {
+            Ok(parent) if !parent.is_invalid() => client_origin(parent),
+            _ => (0, 0),
+        };
+        let pos = monitor.position();
+        let size = monitor.size();
+        let _ = unsafe {
+            SetWindowPos(
+                hwnd,
+                None,
+                pos.x - cx,
+                pos.y - cy,
+                size.width as i32,
+                size.height as i32,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+        };
     }
 
     /// Installs a `WH_MOUSE_LL` low-level mouse hook once, on a dedicated thread
@@ -838,46 +1139,50 @@ mod imp {
                         unsafe { CallNextHookEx(None, code, wparam, lparam) }
                     }
 
-                    let Ok(hook) = SetWindowsHookExW(WH_MOUSE_LL, Some(hook_proc), None, 0)
-                    else {
-                        return;
-                    };
+                    match SetWindowsHookExW(WH_MOUSE_LL, Some(hook_proc), None, 0) {
+                        Ok(hook) => {
+                            // Foreground-window changes drive focus, event-based.
+                            use windows::Win32::Foundation::HWND;
+                            use windows::Win32::UI::Accessibility::{
+                                SetWinEventHook, HWINEVENTHOOK,
+                            };
+                            use windows::Win32::UI::WindowsAndMessaging::{
+                                EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT,
+                            };
+                            unsafe extern "system" fn win_event_proc(
+                                _hook: HWINEVENTHOOK,
+                                event: u32,
+                                _hwnd: HWND,
+                                _id_object: i32,
+                                _id_child: i32,
+                                _thread: u32,
+                                _time: u32,
+                            ) {
+                                if event == EVENT_SYSTEM_FOREGROUND {
+                                    dispatch_focus();
+                                }
+                            }
+                            let _ = SetWinEventHook(
+                                EVENT_SYSTEM_FOREGROUND,
+                                EVENT_SYSTEM_FOREGROUND,
+                                None,
+                                Some(win_event_proc),
+                                0,
+                                0,
+                                WINEVENT_OUTOFCONTEXT,
+                            );
 
-                    // Foreground-window changes drive focus, event-based.
-                    use windows::Win32::Foundation::HWND;
-                    use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
-                    use windows::Win32::UI::WindowsAndMessaging::{
-                        EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT,
-                    };
-                    unsafe extern "system" fn win_event_proc(
-                        _hook: HWINEVENTHOOK,
-                        event: u32,
-                        _hwnd: HWND,
-                        _id_object: i32,
-                        _id_child: i32,
-                        _thread: u32,
-                        _time: u32,
-                    ) {
-                        if event == EVENT_SYSTEM_FOREGROUND {
-                            dispatch_focus();
+                            let mut msg = MSG::default();
+                            while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+                                let _ = TranslateMessage(&msg);
+                                DispatchMessageW(&msg);
+                            }
+                            let _ = UnhookWindowsHookEx(hook);
+                        }
+                        Err(e) => {
+                            eprintln!("underpane: SetWindowsHookExW(WH_MOUSE_LL) failed: {e}")
                         }
                     }
-                    let _ = SetWinEventHook(
-                        EVENT_SYSTEM_FOREGROUND,
-                        EVENT_SYSTEM_FOREGROUND,
-                        None,
-                        Some(win_event_proc),
-                        0,
-                        0,
-                        WINEVENT_OUTOFCONTEXT,
-                    );
-
-                    let mut msg = MSG::default();
-                    while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
-                        let _ = TranslateMessage(&msg);
-                        DispatchMessageW(&msg);
-                    }
-                    let _ = UnhookWindowsHookEx(hook);
                 });
         });
     }
@@ -891,17 +1196,21 @@ mod imp {
             registry.retain(|weak| weak.strong_count() > 0);
             registry.iter().filter_map(|weak| weak.upgrade()).collect()
         };
-        for entry in entries {
-            let Ok(child) = entry.child.lock() else {
+        for entry in entries.iter() {
+            let top = entry.top.lock().map(|guard| *guard).unwrap_or(0);
+            if top == 0 {
                 continue;
-            };
-            let Some(child) = *child else {
-                continue;
-            };
-            let Some((position, size)) = MONITORS
+            }
+            let Some((position, size, scale)) = MONITORS
                 .borrow()
                 .get(entry.index)
-                .map(|monitor| (*monitor.position(), *monitor.size()))
+                .map(|monitor| {
+                    (
+                        *monitor.position(),
+                        *monitor.size(),
+                        monitor.scale_factor(),
+                    )
+                })
             else {
                 continue;
             };
@@ -910,75 +1219,92 @@ mod imp {
                 && x < position.x + size.width as i32
                 && y < position.y + size.height as i32;
             if within {
-                inject_mouse_move(child, x as f64, y as f64, position);
+                entry
+                    .pointer_inside
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                let origin = window_origin(top).unwrap_or((position.x, position.y));
+                inject_pointer(entry, x, y, origin, scale);
+            } else if entry
+                .pointer_inside
+                .swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
+                // Clear hover when the cursor leaves this monitor.
+                inject_leave(entry);
             }
         }
     }
 
-    /// Best-effort native pointer injection: posts a `WM_MOUSEMOVE` to WebView2's
-    /// host window at the monitor-relative physical position. Windowed WebView2
-    /// exposes no synthetic-input API, so this is the closest equivalent.
-    fn inject_mouse_move(child: isize, cursor_x: f64, cursor_y: f64, position: tauri::PhysicalPosition<i32>) {
-        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-        use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
-
-        const WM_MOUSEMOVE: u32 = 0x0200;
-
-        let x = (cursor_x as i32 - position.x).clamp(0, 0xffff);
-        let y = (cursor_y as i32 - position.y).clamp(0, 0xffff);
-        let lparam = ((y & 0xffff) << 16) | (x & 0xffff);
-        let hwnd = HWND(child as *mut std::ffi::c_void);
-        unsafe {
-            let _ = PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), LPARAM(lparam as isize));
+    /// Forwards a pointer move to the page through the WebView2 DevTools
+    /// protocol. Window messages cannot be used: the webview is parented
+    /// behind the desktop icons, so Chromium's window tracking sees the real
+    /// cursor over another window and immediately fires `mouseleave`. CDP
+    /// input is injected into the renderer directly, so hover follows the
+    /// coordinates we send. `with_webview` marshals to the main thread.
+    fn inject_pointer(
+        entry: &Entry,
+        screen_x: i32,
+        screen_y: i32,
+        origin: (i32, i32),
+        scale: f64,
+    ) {
+        {
+            let Ok(mut last) = entry.last_inject.lock() else {
+                return;
+            };
+            let now = std::time::Instant::now();
+            if now.duration_since(*last) < std::time::Duration::from_millis(8) {
+                return;
+            }
+            *last = now;
         }
+
+        let (ox, oy) = origin;
+        with_controller(&entry.window, move |controller| {
+            let scale = rasterization_scale(controller).unwrap_or(scale);
+            let x = (screen_x - ox) as f64 / scale;
+            let y = (screen_y - oy) as f64 / scale;
+            call_cdp(controller, "Input.dispatchMouseEvent", &mouse_params(x, y));
+        });
     }
 
-    /// Finds the visible WebView2 host window among `parent`'s children.
-    fn find_webview_child(parent: isize) -> Option<isize> {
-        use windows::core::BOOL;
-        use windows::Win32::Foundation::{HWND, LPARAM};
-        use windows::Win32::UI::WindowsAndMessaging::{
-            EnumChildWindows, GetClassNameW, IsWindowVisible,
-        };
+    /// Injects a move outside the viewport so the page clears hover (fires
+    /// `mouseout`/`mouseleave`). CDP has no explicit leave event.
+    fn inject_leave(entry: &Entry) {
+        dispatch_mouse(&entry.window, -1.0, -1.0);
+    }
 
-        struct Ctx {
-            found: Option<isize>,
-        }
-        unsafe extern "system" fn cb(child: HWND, lparam: LPARAM) -> BOOL {
-            let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
-            if !unsafe { IsWindowVisible(child) }.as_bool() {
-                return BOOL(1);
-            }
-            let mut class_buf = [0u16; 256];
-            let n = unsafe { GetClassNameW(child, &mut class_buf) };
-            if n > 0 {
-                let class = String::from_utf16_lossy(&class_buf[..n as usize]);
-                if class.contains("Chrome") || class.contains("WebView") {
-                    ctx.found = Some(child.0 as isize);
-                    return BOOL(0);
-                }
-            }
-            BOOL(1)
-        }
+    /// Screen-space origin of `hwnd`, used to convert a cursor position into the
+    /// webview's viewport coordinates.
+    fn window_origin(hwnd: isize) -> Option<(i32, i32)> {
+        use windows::Win32::Foundation::{HWND, RECT};
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
-        let mut ctx = Ctx { found: None };
-        let parent = HWND(parent as *mut std::ffi::c_void);
-        let _ = unsafe {
-            EnumChildWindows(
-                Some(parent),
-                Some(cb),
-                LPARAM(&mut ctx as *mut _ as isize),
-            )
-        };
-        ctx.found
+        let mut rect = RECT::default();
+        unsafe { GetWindowRect(HWND(hwnd as *mut std::ffi::c_void), &mut rect) }
+            .ok()
+            .map(|_| (rect.left, rect.top))
+    }
+
+    /// Screen-space origin of `hwnd`'s client area. `SetWindowPos` positions a
+    /// child relative to its parent's client area, but monitor coordinates are
+    /// in screen space, so they must be offset by this. Non-zero whenever the
+    /// virtual desktop origin is not `(0, 0)` (a monitor left of/above the
+    /// primary).
+    fn client_origin(hwnd: windows::Win32::Foundation::HWND) -> (i32, i32) {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::ClientToScreen;
+
+        let mut pt = POINT { x: 0, y: 0 };
+        let _ = unsafe { ClientToScreen(hwnd, &mut pt) };
+        (pt.x, pt.y)
     }
 
     /// Reparents the webview window so it sits between the desktop wallpaper and
-    /// the desktop icons. Returns WebView2's host window, if found.
+    /// the desktop icons. Returns the top-level window.
     fn set_window_as_background(
         window: &WebviewWindow,
         monitor: &Monitor,
-    ) -> anyhow::Result<Option<isize>> {
+    ) -> anyhow::Result<isize> {
         use windows::core::{BOOL, PCWSTR};
         use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -990,7 +1316,7 @@ mod imp {
 
         let hwnd = window.hwnd()?;
 
-        let child = unsafe {
+        let top = unsafe {
             let progman = FindWindowW(PCWSTR(wide("Progman").as_ptr()), PCWSTR::null())?;
 
             // 0x052C asks Progman to spawn a WorkerW behind the desktop icons.
@@ -1078,12 +1404,9 @@ mod imp {
             if !is_raised {
                 let parent_raw = parent.0 as usize;
                 let _ = window.with_webview(move |webview| {
-                    #[cfg(windows)]
-                    unsafe {
-                        let _ = webview
-                            .controller()
-                            .SetParentWindow(HWND(parent_raw as *mut std::ffi::c_void));
-                    }
+                    let _ = webview
+                        .controller()
+                        .SetParentWindow(HWND(parent_raw as *mut std::ffi::c_void));
                 });
             }
 
@@ -1094,11 +1417,12 @@ mod imp {
             } else {
                 HWND_BOTTOM
             };
+            let (cx, cy) = client_origin(parent);
             let _ = SetWindowPos(
                 hwnd,
                 Some(z),
-                pos.x,
-                pos.y,
+                pos.x - cx,
+                pos.y - cy,
                 size.width as i32,
                 size.height as i32,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
@@ -1106,11 +1430,10 @@ mod imp {
 
             let _ = result;
 
-            find_webview_child(hwnd.0 as isize)
-                .or_else(|| find_webview_child(parent.0 as isize))
+            hwnd.0 as isize
         };
 
-        Ok(child)
+        Ok(top)
     }
 
     /// Encodes a string as a NUL-terminated UTF-16 buffer for Win32 wide APIs.
